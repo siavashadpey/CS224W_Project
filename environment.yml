@@ -1,0 +1,28 @@
+name: cs224w
+channels:
+  - pytorch
+  - pyg
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pytorch>=2.5.0
+  - pytorch-cuda=12.4
+  - torchvision
+  - pytorch-geometric
+  - pyg::torch-scatter
+  - pyg::torch-sparse
+  - numpy
+  - scikit-learn
+  - matplotlib
+  - pyyaml
+  - requests
+  - tqdm
+  - pytest
+  - jupyter
+  - pip
+  - pip:
+    - google-cloud-storage
+    - google-cloud-aiplatform
+    - wandb
+    - tensorboard
