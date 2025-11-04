@@ -26,12 +26,12 @@ class EGNNConv(MessagePassing):
 
     Shapes:
         - **x**: node features :math:`(|\mathcal{V}|, F_{in})`
-        - **pos**: node positions :math:`(|\mathcal{V}|, pos\_dim)`
+        - **pos**: node positions :math:`(|\mathcal{V}|, pos_{dim})`
         - **edge_index**: graph connectivity :math:`(2, |\mathcal{E}|)`
         - **edge_attr**: edge features :math:`(|\mathcal{E}|, F_{edge})` *(optional)*
         - **output**: tuple containing
             - updated node features :math:`(|\mathcal{V}|, F_{out})`
-            - updated node positions :math:`(|\mathcal{V}|, pos\_dim)`
+            - updated node positions :math:`(|\mathcal{V}|, pos_{dim})`
         """
     def __init__(self, 
                  nn_edge        : Callable,

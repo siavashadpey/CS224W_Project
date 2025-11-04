@@ -6,7 +6,7 @@ from torch import Tensor
 from torch_geometric.nn.resolver import activation_resolver
 from torch_geometric.typing import Adj
 
-from .egnn import EGNNConv
+from . import EGNNConv
 
 class EGNN(torch.nn.Module):
     r"""The Equivariant Graph Neural Network Model from the `"E(n) Equivariant Graph Neural Networks"
@@ -17,6 +17,7 @@ class EGNN(torch.nn.Module):
         in_channels     (int): Size of each input node feature.
         hidden_channels (int): Size of each hidden node feature.
         num_layers      (int): Number of EGNNConv layers.
+        pos_dim         (int): Dimension of node positions.
         edge_dim        (int): Size of each edge feature. (default: :obj:`0`)
         update_pos      (bool): If set to :obj:`False`, node positions will not be updated. (default: :obj:`True`)
         act             (str or Callable): Activation function to use. (default: :obj:`"SiLU"`)
@@ -27,6 +28,7 @@ class EGNN(torch.nn.Module):
             in_channels    : int,
             hidden_channels: int,
             num_layers     : int,
+            pos_dim        : int,
             edge_dim       : int = 0,
             update_pos     : bool = True,
             act            : Union['str', Callable] = "SiLU",
@@ -54,8 +56,7 @@ class EGNN(torch.nn.Module):
                     torch.nn.Linear(hidden_channels, 1))
             else:
                 nn_pos = None
-            self.convs.append(EGNNConv(nn_edge, nn_node, nn_pos, skip_connection=skip_connection))
-
+            self.convs.append(EGNNConv(nn_edge, nn_node, nn_pos, pos_dim, skip_connection))
     def forward(self,
                 edge_index: Adj,
                 x: Tensor,
