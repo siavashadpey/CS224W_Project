@@ -35,11 +35,29 @@ class EGNN(torch.nn.Module):
             skip_connection: bool = False):
         super().__init__()
 
-        self.embedding_node = torch.nn.Linear(in_channels, hidden_channels)
-
+        assert skip_connection is False or in_channels == hidden_channels, "Skip connection requires in_channels == hidden_channels"
         act = activation_resolver(act) 
         self.convs = torch.nn.ModuleList()
-        for _ in range(num_layers):
+        nn_edge = torch.nn.Sequential(
+            torch.nn.Linear(2 * in_channels + 1 + edge_dim, hidden_channels),
+            act,
+            torch.nn.Linear(hidden_channels, hidden_channels),
+            act)
+        nn_node = torch.nn.Sequential(
+            torch.nn.Linear(in_channels + hidden_channels, hidden_channels),
+            act,
+            torch.nn.Linear(hidden_channels, hidden_channels))
+        if update_pos:
+            layer_pos = torch.nn.Linear(hidden_channels, 1, bias=True)
+            torch.nn.init.xavier_uniform_(layer_pos.weight, gain=0.001)
+            nn_pos = torch.nn.Sequential(
+                torch.nn.Linear(hidden_channels, hidden_channels),
+                act,
+                layer_pos)
+        else:
+            nn_pos = None
+        self.convs.append(EGNNConv(nn_edge, nn_node, pos_dim, nn_pos, skip_connection))
+        for _ in range(num_layers-1):
             nn_edge = torch.nn.Sequential(
                 torch.nn.Linear(2 * hidden_channels + 1 + edge_dim, hidden_channels),
                 act,
@@ -50,20 +68,21 @@ class EGNN(torch.nn.Module):
                 act,
                 torch.nn.Linear(hidden_channels, hidden_channels))
             if update_pos:
+                layer_pos = torch.nn.Linear(hidden_channels, 1, bias=True)
+                torch.nn.init.xavier_uniform_(layer_pos.weight, gain=0.001)
                 nn_pos = torch.nn.Sequential(
                     torch.nn.Linear(hidden_channels, hidden_channels),
                     act,
-                    torch.nn.Linear(hidden_channels, 1))
+                    layer_pos)
             else:
                 nn_pos = None
-            self.convs.append(EGNNConv(nn_edge, nn_node, nn_pos, pos_dim, skip_connection))
+            self.convs.append(EGNNConv(nn_edge, nn_node, pos_dim, nn_pos, skip_connection))
     def forward(self,
-                edge_index: Adj,
                 x: Tensor,
                 pos: Tensor,
+                edge_index: Adj,
                 edge_attr: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
-        
-        x = self.embedding_node(x)
+
         for conv in self.convs:
             x, pos = conv(x, pos, edge_index, edge_attr)
 

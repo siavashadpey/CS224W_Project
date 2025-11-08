@@ -13,6 +13,8 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric import seed_everything
 
+from google.cloud import storage
+
 seed_everything(1021)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -69,7 +71,6 @@ class AE(torch.nn.Module):
         dist_sqr = dist_sqr.masked_fill(diagonal_mask,  -1e10) # remove self-loops
         dist_sqr = dist_sqr
         return dist_sqr 
-
 
 def GenerateDataset(num_graphs_per_node: int,
                     nodes_per_graph: List[int],
@@ -215,11 +216,12 @@ def f1(tp, fp, fn):
     
     return f1_score
 
-CHECKPOINT_DIR = "checkpoints"
+CHECKPOINT_DIR = os.environ.get("AIP_MODEL_DIR", "./checkpoints")
+GCS_BUCKET = os.environ.get("GCS_BUCKET", None)
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-def save_checkpoint(model, optimizer, epoch, train_results, test_results, filepath):
-    """Save model checkpoint"""
+def save_checkpoint(model, optimizer, epoch, train_results, test_results, file_path):
+    """Save checkpoint locally or to GCS depending on path."""
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -231,8 +233,20 @@ def save_checkpoint(model, optimizer, epoch, train_results, test_results, filepa
         'train_f1': train_results['f1'],
         'test_f1': test_results['f1']
     }
-    torch.save(checkpoint, filepath)
-    print(f"Checkpoint saved: {filepath}")
+
+    torch.save(checkpoint, file_path)
+    print(f"Checkpoint saved locally: {file_path}")
+
+    if GCS_BUCKET:
+        try:
+            gcs_path = f"checkpoints/{os.path.basename(file_path)}"
+            client = storage.Client()
+            bucket = client.bucket(GCS_BUCKET)
+            blob = bucket.blob(gcs_path)
+            blob.upload_from_filename(file_path)
+            print(f"Checkpoint uploaded to GCS: gs://{GCS_BUCKET}/{gcs_path}")
+        except Exception as e:
+            print(f"Failed to upload checkpoint to GCS: {e}")
 
 def load_checkpoint(model, optimizer, filepath):
     """Load model checkpoint"""
@@ -251,8 +265,8 @@ if __name__ == "__main__":
     NODES_PER_EDGE = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     PROB_EDGE = 0.25
     BATCH_SIZE = 128
-    NUM_GRAPHS_PER_NODE_TRAIN = 500
-    NUM_GRAPHS_PER_NODE_TEST = 50
+    NUM_GRAPHS_PER_NODE_TRAIN = 5
+    NUM_GRAPHS_PER_NODE_TEST = 5
     POS_DIM = 8
     EDGE_DIM = 1
 
@@ -263,7 +277,7 @@ if __name__ == "__main__":
 
     # Optimization/loss parameters
     LEARNING_RATE = 1E-4
-    NB_EPOCHS = 100
+    NB_EPOCHS = 5
 
     # Prepare dataloaders
     train_dataset = GenerateDataset(num_graphs_per_node=NUM_GRAPHS_PER_NODE_TRAIN,

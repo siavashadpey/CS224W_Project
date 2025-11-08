@@ -17,9 +17,9 @@ class EGNNConv(MessagePassing):
     Equivariant Graph Neural Network Layer.
     Args:
         nn_edge  (Callable): Neural network for edge message computation.
-        nn_pos   (Callable): Neural network for position updates.
         nn_node  (Callable): Neural network for node feature updates.
         pos_dim  (int): Dimension of node positions. (default: :obj:`3`)
+        nn_pos   (Callable): Neural network for position updates.
         skip_connection (bool): If set to :obj:`True`, adds skip connections to node features. (default: :obj:`False`)
         **kwargs (optional): Additional arguments of
             :class:`torch_geometric.nn.conv.MessagePassing`.
@@ -36,8 +36,8 @@ class EGNNConv(MessagePassing):
     def __init__(self, 
                  nn_edge        : Callable,
                  nn_node        : Callable,
+                 pos_dim        : int,
                  nn_pos         : Optional[Callable] = None,
-                 pos_dim        : int = 3,
                  skip_connection: bool = False,
                  **kwargs):
         super().__init__(**kwargs)
@@ -101,6 +101,7 @@ class EGNNConv(MessagePassing):
 
         if self.nn_pos is not None:
             out_pos_j = self.nn_pos(out)
+            pos_diff = pos_diff/(torch.sqrt(square_norm) + 1e-8)
             message_pos_j = pos_diff * out_pos_j
             out = torch.cat([out, message_pos_j], dim=-1)
  

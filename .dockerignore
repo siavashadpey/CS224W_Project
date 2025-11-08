@@ -1,18 +1,22 @@
-__pycache__/
-*.py[cod]
-.Python
-*.egg-info/
-
-# Don't copy these to Docker image
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.Python
+**/*.so
+**/*.egg
+**/*.egg-info
+**/build
+**/dist
+**/.pytest_cache
+**/.tox
+.git
+.vscode
+.env
 checkpoints/*.pt
 checkpoints/*.pth
-data/
-logs/
-.git/
-.vscode/
-.env
-
-# Keep directory structure
+data/*
+logs/*
 !checkpoints/.gitkeep
 !data/.gitkeep
 !logs/.gitkeep

@@ -9,9 +9,6 @@ dependencies:
   - pytorch>=2.5.0
   - pytorch-cuda=12.4
   - torchvision
-  - pytorch-geometric
-  - pyg::torch-scatter
-  - pyg::torch-sparse
   - numpy
   - scikit-learn
   - matplotlib
@@ -22,6 +19,9 @@ dependencies:
   - jupyter
   - pip
   - pip:
+    - torch-geometric
+    - torch-scatter
+    - torch-sparse
     - google-cloud-storage
     - google-cloud-aiplatform
     - wandb
