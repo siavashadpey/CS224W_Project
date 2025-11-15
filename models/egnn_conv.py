@@ -18,8 +18,8 @@ class EGNNConv(MessagePassing):
     Args:
         nn_edge  (Callable): Neural network for edge message computation.
         nn_node  (Callable): Neural network for node feature updates.
-        pos_dim  (int): Dimension of node positions. (default: :obj:`3`)
-        nn_pos   (Callable): Neural network for position updates.
+        pos_dim  (int): Dimension of node positions. 
+        nn_pos   (Callable): Neural network for position updates. (optional)
         skip_connection (bool): If set to :obj:`True`, adds skip connections to node features. (default: :obj:`False`)
         **kwargs (optional): Additional arguments of
             :class:`torch_geometric.nn.conv.MessagePassing`.

@@ -44,8 +44,6 @@ def test_egnn_parameters(in_channels, hidden_channels, num_layers, pos_dim, upda
     assert out_node.size() == (nb_nodes, hidden_channels)
     assert out_pos.size() == (nb_nodes, pos_dim)
 
-
-
 @pytest.mark.parametrize('pos_dim', pos_dim)
 def test_egnn_equivariance(pos_dim):
     in_channels = 4
