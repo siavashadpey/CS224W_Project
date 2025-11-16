@@ -155,7 +155,7 @@ class MaskedGeometricAutoencoder(nn.Module):
         # Randomly mask nodes and their edges.
         num_nodes = x.size(0)
         num_masked = int(self.masking_ratio * num_nodes)
-        node_indices_perm = torch.randperm(num_nodes)
+        node_indices_perm = torch.randperm(num_nodes, device=x.device)
         mask_indices, vis_indices = node_indices_perm[:num_masked], node_indices_perm[num_masked:]
 
         # Subgraph for visible nodes. Edges connected to masked nodes are removed.
@@ -169,7 +169,7 @@ class MaskedGeometricAutoencoder(nn.Module):
         # Unlike the visible nodes, which use the encoded features and positions,
         # the masked nodes share the same learnable token
         # and their positions are initialized with random noise 
-        z_m = self.masked_node_token.repeat(num_masked, 1)
+        z_m = self.masked_node_token.repeat(num_masked, 1).to(x.device)
         pos_m = torch.randn((num_masked, pos.size(1)), device=pos.device)
 
         # Combine visible and masked nodes
