@@ -53,4 +53,4 @@ RUN mkdir -p /workspace/checkpoints /workspace/data /workspace/logs
 # Expose port for TensorBoard (optional)
 EXPOSE 6006
 
-CMD ["python", "tests/egnn_ae.py"]
+ENTRYPOINT ["python", "scripts/train_masked_autoencoder.py"]
