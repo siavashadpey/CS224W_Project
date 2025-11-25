@@ -18,7 +18,7 @@ seed_everything(1313)
 from models.bimolecular_affinity_models import MaskedGeometricAutoencoder, Encoder, Decoder
 from utils.checkpoint_utils import save_checkpoint, load_checkpoint
 from utils.losses import l2_loss
-from utils.gcs_dataset_loader import create_gcs_dataloaders # gcs_dataset_loader in utils
+from utils.gcs_dataset_loader import create_gcs_dataloaders
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)

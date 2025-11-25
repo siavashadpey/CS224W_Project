@@ -10,6 +10,15 @@ WORKDIR /workspace
 
 RUN pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --upgrade pip
 
+# Install git to clone GEMS
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+# Clone GEMS repository
+RUN git clone https://github.com/camlab-ethz/GEMS.git /GEMS
+
+# Add GEMS to Python path - needed to load PDBBind Clean PyG datasets
+ENV PYTHONPATH="/GEMS:${PYTHONPATH}"
+
 RUN pip install --no-cache-dir \
     --trusted-host pypi.org \
     --trusted-host files.pythonhosted.org \

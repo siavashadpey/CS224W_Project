@@ -16,7 +16,7 @@ MOCK_TEST_PREFIX="mock_data/test"
 
 # --- Setup ---
 echo "--- Step 1: Create mock data files ---"
-python create_mock_data.py
+python tests/create_mock_data.py
 
 # To fully mock the behavior of gcs_dataset_loader.py, 
 # we need to simulate the 'download' step by copying the mock files
@@ -45,7 +45,7 @@ export SKIP_GCS_DOWNLOAD="True"
 # If we don't actually want to run the model training (which will take time),
 # we can change the number of epochs to a small number like 2.
 
-python ../scripts/train_masked_autoencoder.py \
+python scripts/train_masked_autoencoder.py \
     --gcs_bucket "$MOCK_BUCKET" \
     --train_prefix "$MOCK_TRAIN_PREFIX" \
     --val_prefix "$MOCK_VAL_PREFIX" \
