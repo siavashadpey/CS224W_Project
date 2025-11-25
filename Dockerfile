@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/camlab-ethz/GEMS.git /GEMS
 
 # Add GEMS to Python path - needed to load PDBBind Clean PyG datasets
-ENV PYTHONPATH="/GEMS:${PYTHONPATH}"
+ENV PYTHONPATH="/GEMS:${PYTHONPATH:-}"
 
 RUN pip install --no-cache-dir \
     --trusted-host pypi.org \

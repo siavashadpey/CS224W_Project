@@ -9,7 +9,7 @@ cd "$PROJECT_ROOT"
 
 echo "Working directory: $(pwd)"
 echo "Building Docker image from Dockerfile..."
-docker build -t cs224-test:latest .
+docker build -t cs224w-test:latest .
 
 echo ""
 echo "Running tests inside Docker container..."
