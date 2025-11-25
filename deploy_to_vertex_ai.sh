@@ -7,7 +7,7 @@ cd ~/CS224W_Project
 
 # Configuration
 export PROJECT_ID=$(gcloud config get-value project)
-export REGION="${REGION:-us-east1}"  # Allow override
+export REGION="${REGION:-us-central1}"  # Allow override us-east1
 export IMAGE_NAME="cs224w-training"
 export IMAGE_TAG="latest"
 export IMAGE_URI="gcr.io/${PROJECT_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
@@ -19,8 +19,10 @@ export MACHINE_TYPE="${MACHINE_TYPE:-n1-standard-8}"
 export GPU_TYPE="${GPU_TYPE:-NVIDIA_TESLA_T4}"
 
 # Training configuration
-export DATASET_FILE_PREFIX="00AEPL_"
-export GCS_BUCKET="cs224w-2025-mae-gnn-bucket"
+# export DATASET_FILE_PREFIX="00AEPL_"
+# export GCS_BUCKET="cs224w-2025-mae-gnn-bucket"
+export DATASET_FILE_PREFIX=""
+export GCS_BUCKET="cs224w-2025-mae-gnn-central"
 export TRAIN_PREFIX="data/GEMS_pytorch_datasets/${DATASET_FILE_PREFIX}train_cleansplit"
 export VAL_PREFIX="data/GEMS_pytorch_datasets/${DATASET_FILE_PREFIX}casf2013"
 export TEST_PREFIX="data/GEMS_pytorch_datasets/${DATASET_FILE_PREFIX}casf2016_indep"
