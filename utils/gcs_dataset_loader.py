@@ -99,12 +99,8 @@ def download_gcs_files(bucket_name: str, prefix: str, local_cache_dir: str, forc
 class GCSPyGDataset(Dataset):
     """
     A PyTorch Geometric Dataset wrapper that loads pre-saved Data objects 
-    from local files, typically downloaded from GCS. This design is ideal for 
-    large datasets (like 20GB) that cannot fit into memory, as it loads samples 
-    on demand from the high-speed local disk cache.
-    
-    Assumes each file is a single torch_geometric.data.Data object saved 
-    via torch.save(data, 'file.pt').
+    from local files, typically downloaded from GCS. It loads samples 
+    on demand from the high-speed local disk cache.   
     """
     def __init__(self, root: str, file_paths: List[str], transform=None, pre_transform=None):
         self.file_paths = file_paths
@@ -118,6 +114,7 @@ class GCSPyGDataset(Dataset):
         if self.file_paths:
             logger.info("Inspecting first data sample to determine feature dimensions...")
             first_data = self.get(0)
+            logger.info(f"datatype of dataset: from {self.file_paths}: {type(first_data)}")
             # Assuming 'x' is node features and 'edge_attr' is edge features
             self._node_features = first_data.x.size(1) if first_data.x is not None else 0
             self._edge_features_dim = first_data.edge_attr.size(1) if first_data.edge_attr is not None else 0
@@ -140,13 +137,13 @@ class GCSPyGDataset(Dataset):
         return len(self.file_paths)
 
     def get(self, idx: int) -> Data:
-        """Loads a single Data object from a file path."""
+        """Loads Dataset object from file path."""
         file_path = self.file_paths[idx]
         try:
             # Load the pre-saved Data object
             # explicitly set weights_only=False to load PyG Data object
-            data = torch.load(file_path, weights_only=False)
-            return data
+            dataset = torch.load(file_path, weights_only=False)
+            return dataset
         except Exception as e:
             logger.error(f"Error loading data from {file_path}: {e}")
             raise RuntimeError(f"Failed to load graph data at index {idx} from {file_path}")
