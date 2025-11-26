@@ -166,17 +166,37 @@ class MaskedGeometricAutoencoder(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
         self.masking_ratio = masking_ratio
+        
         # Ensure masked token dimension matches encoder output dimension (hidden channels)
-        self.masked_node_token = nn.Parameter(torch.randn(1, self.encoder.hidden_channels))
+        # Initialize to smaller values to help stabilize training
+        self.masked_node_token = nn.Parameter(torch.randn(1, self.encoder.hidden_channels) * 0.01)
 
+        # *** ADD: Apply careful initialization to all layers ***
+        #self.apply(self._init_weights)
+    
+    def _init_weights(self, module):
+        """Initialize weights with smaller values"""
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_uniform_(module.weight, gain=0.01)  # Small gain
+            if module.bias is not None:
+                module.bias.data.fill_(0.01)
+        elif isinstance(module, nn.Parameter):
+            module.data.normal_(0, 0.01)
+
+    
     def forward(self,
                 x  : Tensor,
                 pos: Tensor,
                 edge_index: Adj,
                 edge_attr: Tensor, 
                 batch_indices: Tensor) -> Tuple[Tensor, Tensor]:
-
+        """Forward pass"""
     
+        if torch.isnan(x).any():
+            print("NaN in input x!")
+        if torch.isnan(pos).any():
+            print("NaN in input pos")
+            
         # Randomly mask nodes and their edges.
         num_nodes = x.size(0)
         num_masked = int(self.masking_ratio * num_nodes)

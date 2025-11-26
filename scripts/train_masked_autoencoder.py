@@ -40,18 +40,67 @@ def train_one_epoch(data_loader,
     """
     model.train()
     total_loss = 0
-    for batch in data_loader:
+    valid_batch_count = 0
+    nan_batch_count = 0
+
+    for batch_idx, batch in enumerate(data_loader):
         batch = batch.to(device)
         optimizer.zero_grad()
 
         batch_indices = batch.batch if hasattr(batch, 'batch') else torch.zeros(batch.x.size(0), dtype=torch.long, device=device)
-        predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr, batch_indices)
-        loss = loss_fn(predicted_pos, batch.pos[mask_indices])
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
+
+        try:
+            predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr, batch_indices)
+        
+            # Check masking
+            if len(mask_indices) == 0:
+                logger.warning(f"Batch {batch_idx}: No nodes masked - skipping!")
+                continue
+
+            loss = loss_fn(predicted_pos, batch.pos[mask_indices])
+            
+            if torch.isnan(loss) or torch.isinf(loss):
+                logger.warning(f"Batch {batch_idx}: Invalid loss {loss.item()} - skipping!")
+                nan_batch_count += 1
+                continue
+
+            loss.backward()
+
+            # *** Add gradient clipping to avoid exploding gradients causing NaN loss
+            # clip_grad_norm_ does in-place update and returns original to grad_norm
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters, max_norm=1.0)
+
+            # Check for NaN gradients
+            has_nan_grad = False
+            for param in model.parameters():
+                if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
+                    has_nan_grad - True
+                    break
+            if has_nan_grad:
+                logger.warning(f"Batch {batch_idx}: NaN gradient detected - skipping!")
+                nan_batch_count += 1
+                optimizer.zero_grad()
+                continue
+
+            optimizer.step()
+            total_loss += loss.item()
+            valid_batch_count += 1
+
+            if batch_idx % 10 == 0:
+                logger.info(f"Batch {batch_idx}: loss={loss.item():.4f}, grad_norm={grad_norm:.4f}")
+
+        except Exception as e:
+            logger.error(f"Batch {batch_idx}: Error {e} - skipping!")
+            nan_batch_count += 1
+            continue
+
+    if valid_batch_count == 0:
+        logger.error("No valid batches in epoch!")
+        return float('inf')
     
-    avg_loss = total_loss / len(data_loader)
+    avg_loss = total_loss / valid_batch_count
+    logger.info(f"Epoch summary: valid_batches={valid_batch_count}, nan_batches={nan_batch_count}, avg_loss={avg_loss:.4f}")
+    
     return avg_loss
 
 def eval(data_loader,
@@ -90,7 +139,7 @@ def main():
     
     # Training hyperparameters
     parser.add_argument('--num_epochs', type=int, default=100, help='Number of training epochs.')
-    parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for the optimizer.')
+    parser.add_argument('--learning_rate', type=float, default=1e-5, help='Learning rate for the optimizer.')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
     
@@ -164,6 +213,16 @@ def main():
         logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
         logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, test loss: {checkpoint["test_loss"]}')
 
+    print("\n=== CRITICAL: Checking model initialization ===")
+    for name, param in model.named_parameters():
+        if torch.isnan(param).any() or torch.isinf(param).any():
+            logger.warning(f"NaN/Inf in parameter: {name}")
+            logger.warning(f"   Shape: {param.shape}, values: {param.flatten()[:10]}")
+        else:
+            logger.info(f"{name}: min={param.min():.6f}, max={param.max():.6f}")
+
+    print("Model initialization check complete\n")
+    
     # Training loop
     for epoch in range(epoch_initial, args.num_epochs):
         train_loss = train_one_epoch(train_loader,

@@ -46,6 +46,8 @@ class EGNNConv(MessagePassing):
         self.nn_pos = nn_pos
         self.skip_connection = skip_connection
         self.pos_dim = pos_dim
+        self.eps = 1e-6  # Epsilon for numerical stability
+        self.clamp = False
         self.reset_parameters()
     
     def reset_parameters(self):
@@ -68,19 +70,51 @@ class EGNNConv(MessagePassing):
         assert self.skip_connection is False or x.size(-1) == self.nn_node[-1].out_features, "For skip connection, input and output node feature dimensions must match"
 
         #TODO: compute weighted message
-    
+            # Check for NaN in inputs
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            print("NaN/Inf in x input to EGNNConv")
+            x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        if torch.isnan(pos).any() or torch.isinf(pos).any():
+            print("NaN/Inf in pos input to EGNNConv")
+            pos = torch.nan_to_num(pos, nan=0.0, posinf=10.0, neginf=-10.0)
+
         # Perform message passing
         message = self.propagate(edge_index, x=(x, x), pos=(pos, pos), edge_attr=edge_attr, size=size)
         if self.nn_pos is not None:
             (message_node, message_pos) = torch.split(message, [message.size(-1) - self.pos_dim, self.pos_dim], dim=-1)
+                
+            # Clamp position updates to prevent explosion
+            if self.clamp:
+                message_pos = torch.clamp(message_pos, min=-1.0, max=1.0)
+            
             out_pos = pos + message_pos
         else:
             message_node = message
             out_pos = pos
         
-        out_node = self.nn_node(torch.cat([x, message_node], dim=-1))
+        node_input = torch.cat([x, message_node], dim=-1)
+        
+        # Clamp before passing through neural network
+        if self.clamp:
+            node_input = torch.clamp(node_input, min=-10.0, max=10.0)
+        
+        out_node = self.nn_node(node_input)
+        
+        # Check output for NaN
+        if torch.isnan(out_node).any() or torch.isinf(out_node).any():
+            print("NaN/Inf in nn_node output")
+            out_node = torch.nan_to_num(out_node, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+
         if self.skip_connection:
             out_node = out_node + x
+
+         # Final clamp
+        if self.clamp:
+            out_node = torch.clamp(out_node, min=-10.0, max=10.0)
+            out_pos = torch.clamp(out_pos, min=-100.0, max=100.0)
+
         return (out_node, out_pos)
 
     def message(self, 
@@ -92,16 +126,34 @@ class EGNNConv(MessagePassing):
 
         pos_diff = pos_i - pos_j
         square_norm = torch.sum(pos_diff ** 2, dim=-1).unsqueeze(-1)
+        
+        if self.clamp:
+            # Clamp square_norm to prevent extreme values
+            square_norm = torch.clamp(square_norm, min=self.eps, max=1000.0)
+        
+            # Normalize square_norm for better numerical stability
+            # Use log scale for very large distances
+            square_norm = torch.log(square_norm + 1.0)
+
         if edge_attr is not None:
             out = torch.cat([x_j, x_i, square_norm, edge_attr], dim=-1)
         else:
             out = torch.cat([x_j, x_i, square_norm], dim=-1)
 
+        if self.clamp:
+            out = torch.clamp(out, min=-10.0, max=10.0)
+
         out = self.nn_edge(out)
+
+        # Check for NaN after nn_edge
+        if torch.isnan(out).any() or torch.isinf(out).any():
+            print("NaN/Inf in nn_edge output")
+            out = torch.nan_to_num(out, nan=0.0, posinf=1.0, neginf=-1.0)
 
         if self.nn_pos is not None:
             out_pos_j = self.nn_pos(out)
             pos_diff = pos_diff/(torch.sqrt(square_norm) + 1e-8)
+            
             message_pos_j = pos_diff * out_pos_j
             out = torch.cat([out, message_pos_j], dim=-1)
  

@@ -152,7 +152,19 @@ class GCSPyGDataset(Dataset):
         if idx < 0 or idx >= len(self._data_list):
             raise IndexError(f"Index {idx} out of range [0, {len(self._data_list)}]")
         
-        return self._data_list[idx]
+        data = self._data_list[idx]
+
+        # *** ADD: Validate data ***
+        if torch.isnan(data.x).any() or torch.isinf(data.x).any():
+            logger.warning(f"NaN/Inf in features at index {idx}")
+            # Replace NaN with zeros
+            data.x = torch.nan_to_num(data.x, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        if torch.isnan(data.pos).any() or torch.isinf(data.pos).any():
+            logger.warning(f"NaN/Inf in positions at index {idx}")
+            data.pos = torch.nan_to_num(data.pos, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        return data
 
     @property
     def node_features(self) -> int:
