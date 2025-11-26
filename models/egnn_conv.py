@@ -47,7 +47,8 @@ class EGNNConv(MessagePassing):
         self.skip_connection = skip_connection
         self.pos_dim = pos_dim
         self.eps = 1e-6  # Epsilon for numerical stability
-        self.clamp = False
+        self.clamp = True
+        self.clamp_magnitude = 10.0
         self.reset_parameters()
     
     def reset_parameters(self):
@@ -81,6 +82,12 @@ class EGNNConv(MessagePassing):
 
         # Perform message passing
         message = self.propagate(edge_index, x=(x, x), pos=(pos, pos), edge_attr=edge_attr, size=size)
+        
+        if torch.isnan(message).any() or torch.isinf(message).any():
+            print("NaN/Inf in message from propagate")
+            message = torch.nan_to_num(message, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        
         if self.nn_pos is not None:
             (message_node, message_pos) = torch.split(message, [message.size(-1) - self.pos_dim, self.pos_dim], dim=-1)
                 
@@ -125,7 +132,7 @@ class EGNNConv(MessagePassing):
                 edge_attr: Optional[Tensor] = None) -> Tensor:
 
         pos_diff = pos_i - pos_j
-        square_norm = torch.sum(pos_diff ** 2, dim=-1).unsqueeze(-1)
+        square_norm = torch.sum(pos_diff ** 2, dim=-1, keepdim=True)
         
         if self.clamp:
             # Clamp square_norm to prevent extreme values
@@ -136,6 +143,8 @@ class EGNNConv(MessagePassing):
             square_norm = torch.log(square_norm + 1.0)
 
         if edge_attr is not None:
+            if self.clamp:
+                edge_attr = torch.clamp(edge_attr, min=-10.0, max=10.0)
             out = torch.cat([x_j, x_i, square_norm, edge_attr], dim=-1)
         else:
             out = torch.cat([x_j, x_i, square_norm], dim=-1)
@@ -152,9 +161,21 @@ class EGNNConv(MessagePassing):
 
         if self.nn_pos is not None:
             out_pos_j = self.nn_pos(out)
-            pos_diff = pos_diff/(torch.sqrt(square_norm) + 1e-8)
+
+            # Check for NaN in position update
+            if torch.isnan(out_pos_j).any() or torch.isinf(out_pos_j).any():
+                print("NaN/Inf in nn_pos output")
+                out_pos_j = torch.nan_to_num(out_pos_j, nan=0.0, posinf=0.1, neginf=-0.1)
             
-            message_pos_j = pos_diff * out_pos_j
+            # Normalize position difference with better stability
+            dist = torch.sqrt(square_norm + self.eps)
+            pos_diff_normalized = pos_diff / dist
+
+            if self.clamp:
+                pos_diff_normalized = torch.clamp(pos_diff_normalized, min=-1.0, max=1.0)
+                out_pos_j = torch.clamp(out_pos_j, min=-1.0, max=1.0)
+ 
+            message_pos_j = pos_diff_normalized * out_pos_j
             out = torch.cat([out, message_pos_j], dim=-1)
  
         return out
