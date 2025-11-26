@@ -68,7 +68,7 @@ def train_one_epoch(data_loader,
 
             # *** Add gradient clipping to avoid exploding gradients causing NaN loss
             # clip_grad_norm_ does in-place update and returns original to grad_norm
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters, max_norm=1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             # Check for NaN gradients
             has_nan_grad = False
