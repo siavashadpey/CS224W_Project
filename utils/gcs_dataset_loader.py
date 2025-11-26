@@ -99,29 +99,40 @@ def download_gcs_files(bucket_name: str, prefix: str, local_cache_dir: str, forc
 class GCSPyGDataset(Dataset):
     """
     A PyTorch Geometric Dataset wrapper that loads pre-saved Data objects 
-    from local files, typically downloaded from GCS. It loads samples 
-    on demand from the high-speed local disk cache.   
+    from local files. Each file contains a list of Data objects.   
     """
     def __init__(self, root: str, file_paths: List[str], transform=None, pre_transform=None):
         self.file_paths = file_paths
         self._node_features = None
         self._edge_features_dim = None
+        self._data_list = []
         
         # call the parent constructor with the root path
         super().__init__(root, transform, pre_transform)
         
-        # Inspect the first item to determine feature dimensions needed for the model initialization
-        if self.file_paths:
+        # Load and flatten all data
+        logger.info("Load data from file...")
+        for file_path in self.file_paths:
+            try:
+                loaded_data = torch.load(file_path, weights_only=False)
+                logger.debug(f"Loaded data type: {type(loaded_data)}")
+                self._data_list.extend(loaded_data)
+            except Exception as e:
+                logger.error(f"Error loading data from {file_path}: {e}")
+                raise
+
+        # Inspect the first itme to determine features dimensions
+        if self._data_list:
             logger.info("Inspecting first data sample to determine feature dimensions...")
-            first_data = self.get(0)
-            logger.info(f"datatype of dataset: from {self.file_paths}: {type(first_data)}")
-            # Assuming 'x' is node features and 'edge_attr' is edge features
+            first_data = self._data_list[0]
+            logger.debug(f"First data object type: {type(first_data)}")
+
             self._node_features = first_data.x.size(1) if first_data.x is not None else 0
             self._edge_features_dim = first_data.edge_attr.size(1) if first_data.edge_attr is not None else 0
         
-        logger.info(f"Dataset initialized with {len(self)} samples.")
-        logger.info(f"Determined Node Features Dim: {self.node_features}")
-        logger.info(f"Determined Edge Features Dim: {self.edge_features_dim}")
+        logger.info(f"Dataset initialized with {len(self)} samples (loaded from {len(self.file_paths)}).")
+        logger.info(f"Node Features Dim: {self.node_features}")
+        logger.info(f"Edge Features Dim: {self.edge_features_dim}")
 
     @property
     def raw_file_names(self) -> List[str]:
@@ -134,19 +145,14 @@ class GCSPyGDataset(Dataset):
         return [os.path.basename(p) for p in self.file_paths]
 
     def len(self) -> int:
-        return len(self.file_paths)
+        return len(self._data_list)
 
     def get(self, idx: int) -> Data:
-        """Loads Dataset object from file path."""
-        file_path = self.file_paths[idx]
-        try:
-            # Load the pre-saved Data object
-            # explicitly set weights_only=False to load PyG Data object
-            dataset = torch.load(file_path, weights_only=False)
-            return dataset
-        except Exception as e:
-            logger.error(f"Error loading data from {file_path}: {e}")
-            raise RuntimeError(f"Failed to load graph data at index {idx} from {file_path}")
+        """Returns a single Data object from the list."""
+        if idx < 0 or idx >= len(self._data_list):
+            raise IndexError(f"Index {idx} out of range [0, {len(self._data_list)}]")
+        
+        return self._data_list[idx]
 
     @property
     def node_features(self) -> int:
