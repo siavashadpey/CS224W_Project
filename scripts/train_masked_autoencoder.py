@@ -12,7 +12,6 @@ sys.path.append(str(project_root))
 from torch import nn, torch
 from torch_geometric import seed_everything
 from torch_geometric.data import Data as PyGData
-from torch_geometric.loader import create_gcs_dataloaders
 
 
 seed_everything(1313)
@@ -20,14 +19,13 @@ seed_everything(1313)
 from models.bimolecular_affinity_models import MaskedGeometricAutoencoder, Encoder, Decoder
 from utils.checkpoint_utils import save_checkpoint, load_checkpoint
 from utils.losses import l2_loss
-from utils.gcs_dataset_loader import create_gcs_dataloaders, GCSPyGDataset
+from utils.gcs_dataset_loader import create_gcs_dataloaders
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
 """
 TODO:
- - Loss function. Should work with batch of graphs (disconnected graph)
  - Prediction head model (models/bimolecular_affinity_models.py)
  - Prediction head training script (scripts/train_prediction_head.py)
 """
