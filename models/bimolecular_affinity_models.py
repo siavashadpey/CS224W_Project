@@ -4,7 +4,8 @@ import torch
 from torch import nn, Tensor
 
 from torch_geometric.typing import Adj
-from torch_geometric.utils import subgraph, to_dense_batch
+from torch_geometric.utils import subgraph
+from torch_geometric.nn import global_mean_pool
 from torch_geometric.data import Data 
 
 from models.egnn import EGNN
@@ -224,3 +225,41 @@ class MaskedGeometricAutoencoder(nn.Module):
         pos_reconstructed = self.decoder(z, pos_combined, edge_index, edge_attr)
 
         return pos_reconstructed[mask_indices,:], mask_indices
+
+
+# ============================================================================
+# Regression head for binding affinity prediction: The encoder gives us the learned embeddings for nodes. We pool them into a graph-level representation for the binding affinity prediction task which operates on molecules not atoms. We can freeze those weights so as to train only the regression head. We use a simple linear layer.
+
+class RegressionHead(nn.Module):
+    def __init__(self,
+                 encoder: nn.Module,
+                 hidden_channels: int,
+                 freeze_encoder: bool = False):
+        super(RegressionHead, self).__init__()
+        
+        self.encoder = encoder
+        self.hidden_channels = hidden_channels
+        self.freeze_encoder = freeze_encoder
+        
+        if freeze_encoder:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+        
+        self.linear = nn.Linear(hidden_channels, 1)
+    
+    def forward(self,
+                x: Tensor,
+                pos: Tensor,
+                edge_index: Adj,
+                edge_attr: Tensor,
+                batch_indices: Tensor) -> Tensor:
+        if self.freeze_encoder:
+            with torch.no_grad():
+                x_encoded, _ = self.encoder(x, pos, edge_index, edge_attr)
+        else:
+            x_encoded, _ = self.encoder(x, pos, edge_index, edge_attr)
+        
+        x_pooled = global_mean_pool(x_encoded, batch_indices)
+        pred = self.linear(x_pooled)
+        
+        return pred
