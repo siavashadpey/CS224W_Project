@@ -1,7 +1,6 @@
 from typing import Tuple
 import os 
 
-from tests.egnn_ae import GCS_BUCKET
 import torch
 from torch import nn
 
