@@ -107,8 +107,11 @@ GPU_TYPE = "${GPU_TYPE}"
 USE_GPU = "${USE_GPU}"
 
 # Initialize
-aiplatform.init(project=PROJECT_ID, location=REGION)
-
+aiplatform.init(
+    project=PROJECT_ID, 
+    location=REGION,
+    staging_bucket=f"gs://{GCS_BUCKET}"
+)
 # Create job
 job = aiplatform.CustomContainerTrainingJob(
     display_name=JOB_NAME,
