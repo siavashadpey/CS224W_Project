@@ -46,7 +46,7 @@ class EGNNConv(MessagePassing):
         self.nn_pos = nn_pos
         self.skip_connection = skip_connection
         self.pos_dim = pos_dim
-        self.eps = 1e-6  # Epsilon for numerical stability
+        self.eps = 1e-8  # Epsilon for numerical stability
         self.clamp = True
         self.clamp_magnitude = 10.0
         self.reset_parameters()
@@ -169,7 +169,7 @@ class EGNNConv(MessagePassing):
             
             # Normalize position difference with better stability
             dist = torch.sqrt(square_norm + self.eps)
-            pos_diff_normalized = pos_diff / dist
+            pos_diff_normalized = pos_diff / (dist + self.eps)
 
             if self.clamp:
                 pos_diff_normalized = torch.clamp(pos_diff_normalized, min=-1.0, max=1.0)

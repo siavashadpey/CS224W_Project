@@ -220,7 +220,6 @@ class MaskedGeometricAutoencoder(nn.Module):
         # sliced features and batch index for the visible nodes 
         x_v = x[vis_indices]
         pos_v = pos[vis_indices]
-        batch_v = batch_indices[vis_indices]
 
         # Encode visible nodes
         x_v, pos_v = self.encoder(x_v, pos_v, edge_index_v, edge_attr_v)

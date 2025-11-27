@@ -13,6 +13,7 @@ from torch import nn, torch
 from torch_geometric import seed_everything
 from torch_geometric.data import Data as PyGData
 
+
 seed_everything(1313)
 
 from models.bimolecular_affinity_models import MaskedGeometricAutoencoder, Encoder, Decoder
@@ -25,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 """
 TODO:
- - Loss function. Should work with batch of graphs (disconnected graph)
  - Prediction head model (models/bimolecular_affinity_models.py)
  - Prediction head training script (scripts/train_prediction_head.py)
 """
@@ -132,14 +132,14 @@ def main():
     parser.add_argument('--val_prefix', type=str, required=True, help='GCS prefix for validation data')
     parser.add_argument('--test_prefix', type=str, required=True, help='GCS prefix for test data')
     parser.add_argument('--cache_dir', type=str, default='/tmp/pyg_cache', help='Local cache directory')
-    
+
     # Model save/load
-    parser.add_argument('--model_save_path', type=str, help='Path to save the trained model.')
+    parser.add_argument('--model_save_path', type=str, required=True, help='Path to save the trained model.')
     parser.add_argument('--load_model_path', type=str, default=None, help='Path to load a pre-trained model.')
     
     # Training hyperparameters
-    parser.add_argument('--num_epochs', type=int, default=100, help='Number of training epochs.')
-    parser.add_argument('--learning_rate', type=float, default=1e-5, help='Learning rate for the optimizer.')
+    parser.add_argument('--num_epochs', type=int, default=150, help='Number of training epochs.')
+    parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate for the optimizer.')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
     
@@ -150,7 +150,7 @@ def main():
     parser.add_argument('--masking_ratio', type=float, default=0.45, help='Ratio of masking for input data.')
     
     # Checkpointing
-    parser.add_argument('--checkpoint_interval', type=int, default=10, help='Periodically save checkpoints each number of epochs.')
+    parser.add_argument('--checkpoint_interval', type=int, default=1, help='Periodically save checkpoints each number of epochs.')
 
     args = parser.parse_args()
 
@@ -213,16 +213,15 @@ def main():
         logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
         logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, test loss: {checkpoint["test_loss"]}')
 
-    print("\n=== CRITICAL: Checking model initialization ===")
     for name, param in model.named_parameters():
         if torch.isnan(param).any() or torch.isinf(param).any():
             logger.warning(f"NaN/Inf in parameter: {name}")
             logger.warning(f"   Shape: {param.shape}, values: {param.flatten()[:10]}")
-        else:
-            logger.info(f"{name}: min={param.min():.6f}, max={param.max():.6f}")
 
-    print("Model initialization check complete\n")
-    
+    best_val_loss = float('inf')
+    best_model_state = None
+    best_epoch = -1
+
     # Training loop
     for epoch in range(epoch_initial, args.num_epochs):
         train_loss = train_one_epoch(train_loader,
@@ -240,6 +239,11 @@ def main():
                             model,
                             l2_loss,
                             device)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model_state = model.state_dict()
+                best_epoch = epoch
+                print(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
 
             save_checkpoint(model,
                             optim,
@@ -249,6 +253,10 @@ def main():
                             test_loss,
                             f"{args.model_save_path}/checkpoint_epoch_{epoch}.pt")
             logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Test Loss: {test_loss:.4f}")
+
+    if best_model_state is not None:
+        torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
+        logger.info(f"Best model saved from epoch {best_epoch} with val loss {best_val_loss:.4f}")
 
 if __name__ == "__main__":
     main()
