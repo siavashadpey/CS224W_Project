@@ -15,7 +15,6 @@
 .env
 checkpoints/*.pt
 checkpoints/*.pth
-data/*
 logs/*
 !checkpoints/.gitkeep
 !data/.gitkeep

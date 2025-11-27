@@ -14,10 +14,10 @@ RUN pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 # Clone GEMS repository
-RUN git clone https://github.com/camlab-ethz/GEMS.git /GEMS
+#RUN git clone https://github.com/camlab-ethz/GEMS.git /GEMS
 
 # Add GEMS to Python path - needed to load PDBBind Clean PyG datasets
-ENV PYTHONPATH="/GEMS:${PYTHONPATH:-}"
+#ENV PYTHONPATH="/GEMS:${PYTHONPATH:-}"
 
 RUN pip install --no-cache-dir \
     --trusted-host pypi.org \
@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pyth
 COPY . .
 RUN pip install --no-cache-dir -e .
 
-RUN mkdir -p /workspace/checkpoints /workspace/data /workspace/logs
+RUN mkdir -p /workspace/checkpoints /workspace/data2 /workspace/logs
 
 # Expose port for TensorBoard (optional)
 EXPOSE 6006
