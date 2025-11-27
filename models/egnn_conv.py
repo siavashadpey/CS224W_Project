@@ -101,7 +101,7 @@ class EGNNConv(MessagePassing):
 
         if self.nn_pos is not None:
             out_pos_j = self.nn_pos(out)
-            pos_diff = pos_diff/(torch.sqrt(square_norm) + 1e-8)
+            pos_diff = pos_diff/(torch.sqrt(square_norm + 1e-8) + 1e-8)
             message_pos_j = pos_diff * out_pos_j
             out = torch.cat([out, message_pos_j], dim=-1)
  
