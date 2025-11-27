@@ -12,20 +12,20 @@ sys.path.append(str(project_root))
 from torch import nn, torch
 from torch_geometric import seed_everything
 from torch_geometric.data import Data as PyGData
+from torch_geometric.loader import DataLoader
 
 seed_everything(1313)
 
 from models.bimolecular_affinity_models import MaskedGeometricAutoencoder, Encoder, Decoder
 from utils.checkpoint_utils import save_checkpoint, load_checkpoint
 from utils.losses import l2_loss
-from utils.gcs_dataset_loader import create_gcs_dataloaders
+from utils.gcs_dataset_loader import GCSPyGDataset
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
 """
 TODO:
- - Loss function. Should work with batch of graphs (disconnected graph)
  - Prediction head model (models/bimolecular_affinity_models.py)
  - Prediction head training script (scripts/train_prediction_head.py)
 """
@@ -77,31 +77,28 @@ def eval(data_loader,
 def main():
     parser = argparse.ArgumentParser(description="Main script for the project.")
     
-    # GCS arguments
-    parser.add_argument('--gcs_bucket', type=str, required=True, help='GCS bucket name')
-    parser.add_argument('--train_prefix', type=str, required=True, help='GCS prefix for training data')
-    parser.add_argument('--val_prefix', type=str, required=True, help='GCS prefix for validation data')
-    parser.add_argument('--test_prefix', type=str, required=True, help='GCS prefix for test data')
-    parser.add_argument('--cache_dir', type=str, default='/tmp/pyg_cache', help='Local cache directory')
-    
+    # dataset 
+    parser.add_argument('--train_data_path', type=str, required=True, help='Local path to training data.')
+    parser.add_argument('--test_data_path', type=str, required=True, help='Local path to test data.')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
+
     # Model save/load
-    parser.add_argument('--model_save_path', type=str, help='Path to save the trained model.')
+    parser.add_argument('--model_save_path', type=str, required=True, help='Path to save the trained model.')
     parser.add_argument('--load_model_path', type=str, default=None, help='Path to load a pre-trained model.')
     
     # Training hyperparameters
-    parser.add_argument('--num_epochs', type=int, default=100, help='Number of training epochs.')
-    parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for the optimizer.')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
+    parser.add_argument('--num_epochs', type=int, default=150, help='Number of training epochs.')
+    parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate for the optimizer.')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training.')
     
     # Model architecture
     parser.add_argument('--num_encoder_layers', type=int, default=3, help='Number of encoder layers in the model.')
     parser.add_argument('--num_decoder_layers', type=int, default=3, help='Number of decoder layers in the model.')
-    parser.add_argument('--hidden_dim', type=int, default=128, help='Hidden dimension size for the model.')
+    parser.add_argument('--hidden_dim', type=int, default=64, help='Hidden dimension size for the model.')
     parser.add_argument('--masking_ratio', type=float, default=0.45, help='Ratio of masking for input data.')
     
     # Checkpointing
-    parser.add_argument('--checkpoint_interval', type=int, default=10, help='Periodically save checkpoints each number of epochs.')
+    parser.add_argument('--checkpoint_interval', type=int, default=1, help='Periodically save checkpoints each number of epochs.')
 
     args = parser.parse_args()
 
@@ -120,32 +117,56 @@ def main():
     logger.info(f'Using device: {device}')
 
     # Load training, testing, and validation data from GCS
-    logger.info("Loading datasets from GCS...")
-    train_loader, val_loader, test_loader, train_dataset = create_gcs_dataloaders(
-        bucket_name=args.gcs_bucket,
-        train_prefix=args.train_prefix,
-        val_prefix=args.val_prefix,
-        test_prefix=args.test_prefix,
+    logger.info("Loading datasets...")
+
+    trainval_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
+    test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
+
+    # split test dataset into validation and test sets (80-20 split)
+    val_size = int(0.2 * len(trainval_dataset))
+    train_size = len(trainval_dataset) - val_size
+    train_dataset, val_dataset = torch.utils.data.random_split(trainval_dataset, [train_size, val_size])
+
+    print(f"train dataset size: {len(train_dataset)}")
+    print(f"val dataset size: {len(val_dataset)}")
+    print(f"test dataset size: {len(test_dataset)}")
+    print(f"Example data in train dataset: {train_dataset[0]}")
+
+    train_loader = DataLoader(
+        train_dataset,
         batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        local_cache_dir=args.cache_dir,
-        force_download=False
+        shuffle=True,
+        num_workers=args.num_workers
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers
     )
 
     # Model
     encoder = Encoder(
-             in_channels=train_dataset.node_features, 
+             in_channels=trainval_dataset.node_features, 
              hidden_channels=args.hidden_dim, 
              num_layers=args.num_encoder_layers,
              pos_dim=3,
-             edge_dim=train_dataset.edge_features_dim,
+             edge_dim=trainval_dataset.edge_features_dim,
              skip_connection=True)
     decoder = Decoder(
              in_channels=args.hidden_dim,
              hidden_channels=args.hidden_dim,
              num_layers=args.num_decoder_layers,
              pos_dim=3,
-             edge_dim=train_dataset.edge_features_dim,
+             edge_dim=trainval_dataset.edge_features_dim,
              skip_connection=True)
     model = MaskedGeometricAutoencoder(
              encoder=encoder, 
@@ -164,6 +185,10 @@ def main():
         logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
         logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, test loss: {checkpoint["test_loss"]}')
 
+    best_val_loss = float('inf')
+    best_model_state = None
+    best_epoch = -1
+
     # Training loop
     for epoch in range(epoch_initial, args.num_epochs):
         train_loss = train_one_epoch(train_loader,
@@ -181,6 +206,11 @@ def main():
                             model,
                             l2_loss,
                             device)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model_state = model.state_dict()
+                best_epoch = epoch
+                print(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
 
             save_checkpoint(model,
                             optim,
@@ -190,6 +220,10 @@ def main():
                             test_loss,
                             f"{args.model_save_path}/checkpoint_epoch_{epoch}.pt")
             logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Test Loss: {test_loss:.4f}")
+
+    if best_model_state is not None:
+        torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
+        logger.info(f"Best model saved from epoch {best_epoch} with val loss {best_val_loss:.4f}")
 
 if __name__ == "__main__":
     main()
