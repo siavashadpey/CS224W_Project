@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from typing import Callable
 
 # Instantiate the standard PyTorch MSE loss module
 mse_loss_module = nn.MSELoss(reduction='mean')

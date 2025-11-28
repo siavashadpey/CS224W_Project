@@ -26,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 """
 TODO:
- - Prediction head model (models/bimolecular_affinity_models.py)
- - Prediction head training script (scripts/train_prediction_head.py)
+    - learning rate scheduler (weight decay)
 """
 
 def train_one_epoch(data_loader, 
@@ -173,6 +172,9 @@ def main():
              decoder=decoder,
              masking_ratio=args.masking_ratio)
     
+    num_params = sum(p.numel() for p in model.parameters())
+    print(f"Number of parameters in model: {num_params}")
+
     for m in [encoder, decoder, model]:
         m.to(device)
     

@@ -4,7 +4,8 @@ import torch
 from torch import nn, Tensor
 
 from torch_geometric.typing import Adj
-from torch_geometric.utils import subgraph, to_dense_batch
+from torch_geometric.utils import subgraph
+from torch_geometric.nn import global_mean_pool
 from torch_geometric.data import Data 
 
 from models.egnn import EGNN
@@ -80,6 +81,10 @@ class Encoder(nn.Module):
             x, pos = self.EGNN_all(x, pos, edge_index, edge_attr)
         
         return x, pos
+    
+    @property 
+    def output_dim(self) -> int:
+        return self.hidden_channels
 
 class Decoder(nn.Module):
     """
@@ -223,3 +228,30 @@ class MaskedGeometricAutoencoder(nn.Module):
         pos_reconstructed = self.decoder(z, pos_combined, edge_index, edge_attr)
 
         return pos_reconstructed[mask_indices,:], mask_indices
+
+
+# ============================================================================
+# Regression head for binding affinity prediction: The encoder gives us the learned embeddings for nodes. We pool them into a graph-level representation for the binding affinity prediction task which operates on molecules not atoms. We can freeze those weights so as to train only the regression head. We use a simple linear layer.
+
+class RegressionHead(nn.Module):
+    def __init__(self,
+                 encoder: nn.Module):
+        super(RegressionHead, self).__init__()
+        
+        self.encoder = encoder
+        self.in_channels = encoder.output_dim
+        
+        self.linear = nn.Linear(self.in_channels, 1)
+    
+    def forward(self,
+                x: Tensor,
+                pos: Tensor,
+                edge_index: Adj,
+                edge_attr: Tensor,
+                batch_indices: Tensor) -> Tensor:
+
+        x_encoded, _ = self.encoder(x, pos, edge_index, edge_attr)
+        x_pooled = global_mean_pool(x_encoded, batch_indices)
+        pred = self.linear(x_pooled)
+        
+        return pred
