@@ -18,9 +18,20 @@ seed_everything(1313)
 from models.bimolecular_affinity_models import RegressionHead, Encoder
 from utils.checkpoint_utils import save_checkpoint
 from utils.gcs_dataset_loader import GCSPyGDataset
+from utils.eval import pearson_correlation_coefficient
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
+
+"""
+TODO:
+    - learning rate scheduler (weight decay)
+    - include MSE val and test loss logging
+    - more sophisticated heads with nonlinearity, e.g.:
+       * Linear -> ReLU -> Linear
+       * 1 EGNN layer + Linear
+       * 1 EGNN layer + supernode
+"""
 
 def train_one_epoch(data_loader, 
                     model: nn.Module, 
@@ -80,22 +91,23 @@ def main():
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
     
     # Model args
-    parser.add_argument('--pretrained_checkpoint', type=str, default=None, 
-                        help='Path to pretrained autoencoder checkpoint')
-    parser.add_argument('--freeze_encoder', action='store_true', 
-                        help='Freeze encoder weights during training')
-    parser.add_argument('--hidden_channels', type=int, default=128, help='Hidden channels in encoder')
+    parser.add_argument('--pretrained_checkpoint', type=str, default=None, help='Path to pretrained autoencoder checkpoint')
+    parser.add_argument('--freeze_encoder', action='store_true', help='Freeze encoder weights during training')
+    parser.add_argument('--hidden_channels', type=int, default=64, help='Hidden channels in encoder')
     parser.add_argument('--num_encoder_layers', type=int, default=3, help='Number of encoder layers')
-    parser.add_argument('--skip_connection', action='store_true', help='Use skip connections in encoder')
+    # we should add this to the mae train head if we add it here: parser.add_argument('--skip_connection', action='store_true', help='Use skip connections in encoder')
     
     # Training args
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
-    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--learning_rate', type=float, default=.0001, help='Learning rate')
     parser.add_argument('--checkpoint_interval', type=int, default=5, help='Save checkpoint every N epochs')
-    parser.add_argument('--model_save_path', type=str, default='./checkpoints', help='Path to save checkpoints')
+    parser.add_argument('--model_save_path', type=str, required=True, help='Path to save checkpoints')
     
     args = parser.parse_args()
+
+    assert(args.pretrained_checkpoint is not None or not args.freeze_encoder), \
+    "Pretrained checkpoint path must be provided if encoder is frozen."
     
     # --- Initialize Logging ---
     # setup logging for Vertex AI
@@ -111,6 +123,9 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f'Using device: {device}')
     
+    # Load training, testing, and validation data from GCS
+    logger.info("Loading datasets...")
+
     # load data
     trainval_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
     test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
@@ -156,7 +171,7 @@ def main():
         edge_dim=edge_features_dim,
         pos_dim=3,
         act="SiLU",
-        skip_connection=args.skip_connection
+        skip_connection=True#args.skip_connection
     )
     
     # load pretrained weights if we have them
@@ -173,20 +188,30 @@ def main():
         encoder.load_state_dict(encoder_state_dict)
         logger.info(f"Loaded model from {args.pretrained_checkpoint}")
     
+    if args.freeze_encoder:
+        logger.info("Freezing encoder parameters.")
+    else:
+        logger.info("Training encoder parameters.")
+        
     model = RegressionHead(
         encoder=encoder,
-        hidden_channels=args.hidden_channels,
-        freeze_encoder=args.freeze_encoder
     )
+
+    num_params = sum(p.numel() for p in model.parameters())
+    print(f"Number of parameters in model: {num_params}")
     
     model = model.to(device)
+
+    if args.freeze_encoder:
+        for param in encoder.parameters():
+            param.requires_grad = False
     
-    optim = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    optim = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate)
     epoch_initial = 0
     
     os.makedirs(args.model_save_path, exist_ok=True)
     
-    best_val_loss = float('inf')
+    best_val_eval = float('-inf')
     best_model_state = None
     best_epoch = -1
     
@@ -195,29 +220,28 @@ def main():
         train_loss = train_one_epoch(train_loader, model, optim, nn.MSELoss(), device)
         
         if epoch % args.checkpoint_interval == 0:
-            val_loss = eval(val_loader, model, nn.MSELoss(), device)
-            test_loss = eval(test_loader, model, nn.MSELoss(), device)
+            val_eval = eval(val_loader, model, pearson_correlation_coefficient, device)
+            test_eval = eval(test_loader, model, pearson_correlation_coefficient, device)
             
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if val_eval > best_val_eval:
+                best_val_eval = val_eval
                 best_model_state = model.state_dict()
                 best_epoch = epoch
-                print(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
+                print(f"New best model found at epoch {best_epoch} with val eval {best_val_eval:.4f}")
             
             save_checkpoint(
                 model,
                 optim,
                 epoch,
                 train_loss,
-                val_loss,
-                test_loss,
+                val_eval,
+                test_eval,
                 f"{args.model_save_path}/checkpoint_epoch_{epoch}.pt"
             )
-            logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Test Loss: {test_loss:.4f}")
+            logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Eval: {val_eval:.4f}, Test Eval: {test_eval:.4f}")
     
     if best_model_state is not None:
         torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
-        logger.info(f"Best model saved from epoch {best_epoch} with val loss {best_val_loss:.4f}")
-
+        logger.info(f"Best model saved from epoch {best_epoch} with val eval {best_val_eval:.4f}")
 if __name__ == '__main__':
     main()

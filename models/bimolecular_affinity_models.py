@@ -81,6 +81,10 @@ class Encoder(nn.Module):
             x, pos = self.EGNN_all(x, pos, edge_index, edge_attr)
         
         return x, pos
+    
+    @property 
+    def output_dim(self) -> int:
+        return self.hidden_channels
 
 class Decoder(nn.Module):
     """
@@ -251,20 +255,13 @@ class MaskedGeometricAutoencoder(nn.Module):
 
 class RegressionHead(nn.Module):
     def __init__(self,
-                 encoder: nn.Module,
-                 hidden_channels: int,
-                 freeze_encoder: bool = False):
+                 encoder: nn.Module):
         super(RegressionHead, self).__init__()
         
         self.encoder = encoder
-        self.hidden_channels = hidden_channels
-        self.freeze_encoder = freeze_encoder
+        self.in_channels = encoder.output_dim
         
-        if freeze_encoder:
-            for param in self.encoder.parameters():
-                param.requires_grad = False
-        
-        self.linear = nn.Linear(hidden_channels, 1)
+        self.linear = nn.Linear(self.in_channels, 1)
     
     def forward(self,
                 x: Tensor,
@@ -272,12 +269,8 @@ class RegressionHead(nn.Module):
                 edge_index: Adj,
                 edge_attr: Tensor,
                 batch_indices: Tensor) -> Tensor:
-        if self.freeze_encoder:
-            with torch.no_grad():
-                x_encoded, _ = self.encoder(x, pos, edge_index, edge_attr)
-        else:
-            x_encoded, _ = self.encoder(x, pos, edge_index, edge_attr)
-        
+
+        x_encoded, _ = self.encoder(x, pos, edge_index, edge_attr)
         x_pooled = global_mean_pool(x_encoded, batch_indices)
         pred = self.linear(x_pooled)
         
