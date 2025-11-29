@@ -43,7 +43,8 @@ RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pyth
     google-cloud-storage \
     google-cloud-aiplatform \
     wandb \
-    tensorboard
+    tensorboard \
+    cloudml-hypertune
 
 COPY . .
 RUN pip install --no-cache-dir -e .

@@ -207,14 +207,23 @@ def create_gcs_dataloaders(
     # 1.1 Training Data
     train_cache_dir = os.path.join(local_cache_dir, 'train')
     train_paths = download_gcs_files(bucket_name, train_prefix, train_cache_dir, force_download)
-    
+    if not train_paths:
+        raise RuntimeError(f"No training data found at gs://{bucket_name}/{train_prefix}")
+    logger.info(f"Found {len(train_paths)} training files")
+
     # 1.2 Validation Data
     val_cache_dir = os.path.join(local_cache_dir, 'val')
     val_paths = download_gcs_files(bucket_name, val_prefix, val_cache_dir, force_download)
+    if not val_paths:
+        raise RuntimeError(f"No validation data found at gs://{bucket_name}/{val_prefix}")
+    logger.info(f"Found {len(val_paths)} validation files")
     
     # 1.3 Test Data
     test_cache_dir = os.path.join(local_cache_dir, 'test')
     test_paths = download_gcs_files(bucket_name, test_prefix, test_cache_dir, force_download)
+    if not test_paths:
+        raise RuntimeError(f"No test data found at gs://{bucket_name}/{test_prefix}")
+    logger.info(f"Found {len(test_paths)} test files")
 
 
     # --- 2. Create Datasets ---
@@ -228,7 +237,14 @@ def create_gcs_dataloaders(
     val_dataset = GCSPyGDataset(root=dataset_root, file_paths=val_paths)
     test_dataset = GCSPyGDataset(root=dataset_root, file_paths=test_paths)
     
+    if len(train_dataset) == 0:
+        raise RuntimeError("Training dataset is empty after loading!")
+    if len(val_dataset) == 0:
+        raise RuntimeError("Validation dataset is empty after loading!")
+    if len(test_dataset) == 0:
+        raise RuntimeError("Test dataset is empty after loaderin!")
     
+    logger.info(f"Dataset sizes: train={len(train_dataset)}, val={len(val_dataset)}, test={len(test_dataset)}")
     # --- 3. Create DataLoaders ---
     
     train_loader = DataLoader(

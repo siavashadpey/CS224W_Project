@@ -42,12 +42,17 @@ fi
 
 # Training configuration
 export TRAIN_PREFIX="data_w_pos/plgems_train.pt"
-export VAL_PREFIX="data_w_pos/plgems_val.pt"
+export VAL_PREFIX="data_w_pos/plgems_validation.pt"
 export TEST_PREFIX="data_w_pos/plgems_full_casf2016.pt"
 export NUM_EPOCHS="${NUM_EPOCHS:-150}"
 export BATCH_SIZE="${BATCH_SIZE:-32}"
 export HIDDEN_DIM="64"
 export CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-10}"
+export LEARNING_RATE=${LEARNING_RATE:-0.0001}
+export HIDDEN_DIM="${HIDDEN_DIM:-128}"
+export NUM_ENCODER_LAYERS="${NUM_ENCODER_LAYERS:-3}"
+export NUM_DECODER_LAYERS="${NUM_DECODER_LAYERS:-3}"
+export MASKING_RATIO="${MASKING_RATIO:-0.45}"
 
 echo "=========================================="
 echo "Vertex AI Deployment"
@@ -137,6 +142,10 @@ job.run(
         "--test_prefix", "${TEST_PREFIX}",
         "--num_epochs", "${NUM_EPOCHS}",
         "--batch_size", "${BATCH_SIZE}",
+        "--hidden_dim", "${HIDDEN_DIM}",
+        "--num_encoder_layers", "${NUM_ENCODER_LAYERS}",
+        "--num_decoder_layers", "${NUM_DECODER_LAYERS}",
+        "--masking_ratio", "${MASKING_RATIO}",
         "--checkpoint_interval", "${CHECKPOINT_INTERVAL}",
         "--cache_dir", "/tmp/pyg_cache",
         "--model_save_path", "/tmp/model",
@@ -162,4 +171,3 @@ echo ""
 echo "Checkpoints will be saved to:"
 echo "  gs://${GCS_BUCKET}/checkpoints/"
 echo ""
-EOF

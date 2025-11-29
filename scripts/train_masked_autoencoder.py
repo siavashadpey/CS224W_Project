@@ -73,7 +73,7 @@ def train_one_epoch(data_loader,
             has_nan_grad = False
             for param in model.parameters():
                 if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
-                    has_nan_grad - True
+                    has_nan_grad = True
                     break
             if has_nan_grad:
                 logger.warning(f"Batch {batch_idx}: NaN gradient detected - skipping!")
@@ -109,6 +109,10 @@ def eval(data_loader,
     """
     Evaluate the model on a dataset.
     """
+    if len(data_loader) == 0:
+        logger.warning("Data loader is empty!")
+        return float('inf')
+
     total_error = 0
     model.eval()
     with torch.no_grad():
@@ -121,6 +125,22 @@ def eval(data_loader,
 
     avg_error = total_error / len(data_loader)
     return avg_error 
+
+def report_hyperparameter_tuning_metric(val_loss, epoch):
+    """Report metric for Vertex AI Hyperparameter Tuning"""
+    try:
+        import hypertune
+        hpt = hypertune.HyperTune()
+        hpt.report_hyperparameter_tuning_metric(
+            hyperparameter_tuning_metric='val_loss',
+            metric_value=val_loss,
+            global_step=epoch
+        )
+        logger.info(f"Reported val_loss={val_loss:.4f} to hyperparameter tuning at epoch {epoch}")
+    except ImportError:
+        logger.debug("hypertune not available, skipping metric reporting")
+    except Exception as e:
+        logger.warning(f"Failed to report metric: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Main script for the project.")
@@ -163,7 +183,6 @@ def main():
     # --------------------------
 
     os.makedirs(args.model_save_path, exist_ok=True)
-    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f'Using device: {device}')
 
@@ -232,20 +251,24 @@ def main():
                                      l2_loss,
                                      device)
 
-        if epoch % args.checkpoint_interval == 0:
-            val_loss = eval(val_loader,
-                            model,
-                            l2_loss,
-                            device)
-            test_loss = eval(test_loader,
-                            model,
-                            l2_loss,
-                            device)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_model_state = model.state_dict()
-                best_epoch = epoch
-                print(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
+        val_loss = eval(val_loader, model, l2_loss, device)
+
+        # Report to hyperparameter tuning service EVERY epoch
+        report_hyperparameter_tuning_metric(val_loss, epoch)
+
+        # Track best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_model_state = model.state_dict()
+            best_epoch = epoch
+            print(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
+
+        # Log progress every epoch
+        logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+
+        # Save checkpoint periodically
+        if (epoch+1) % args.checkpoint_interval == 0:
+            test_loss = eval(test_loader, model, l2_loss, device)
 
             save_checkpoint(model,
                             optim,
@@ -254,11 +277,17 @@ def main():
                             val_loss,
                             test_loss,
                             f"{args.model_save_path}/checkpoint_epoch_{epoch}.pt")
-            logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Test Loss: {test_loss:.4f}")
-
+            logger.info(f"Checkpoint saved. Test Loss: {test_loss:.4f}")
+        
     if best_model_state is not None:
         torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
         logger.info(f"Best model saved from epoch {best_epoch} with val loss {best_val_loss:.4f}")
+    
+    # Final evaluation on test set
+    logger.info("Final evaluation on test set...")
+    model.load_state_dict(best_model_state)
+    final_test_loss = eval(test_loader, model, l2_loss, device)
+    logger.info(f"FInal test loss (best model): {final_test_loss:.4f}")
 
 if __name__ == "__main__":
     main()

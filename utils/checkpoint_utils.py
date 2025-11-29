@@ -1,8 +1,10 @@
 from typing import Tuple
 import os 
-
+import logging
 import torch
 from torch import nn
+
+logger = logging.getLogger(__name__)
 
 def save_checkpoint(model: nn.Module, 
                     optimizer: torch.optim.Optimizer, 
@@ -24,21 +26,30 @@ def save_checkpoint(model: nn.Module,
     }
 
     torch.save(checkpoint, file_path)
-    print(f"Checkpoint saved locally: {file_path}")
+    logger.info(f"Checkpoint saved locally: {file_path}")
 
     GCS_BUCKET = os.environ.get("GCS_BUCKET")
     if GCS_BUCKET:
         from google.cloud import storage
 
         try:
-            gcs_path = f"checkpoints/{os.path.basename(file_path)}"
+            # Get trial ID for unique path (set by Vertex AI during HP tuning)
+            trial_id = os.environ.get('CLOUD_ML_TRIAL_ID', 'local')
+            
+            # Create unique GCS path per trial
+            filename = os.path.basename(file_path)
+            gcs_path = f"checkpoints/trial_{trial_id}/{filename}"
+
             client = storage.Client()
             bucket = client.bucket(GCS_BUCKET)
             blob = bucket.blob(gcs_path)
             blob.upload_from_filename(file_path)
-            print(f"Checkpoint uploaded to GCS: gs://{GCS_BUCKET}/{gcs_path}")
+            logger.info(f"Checkpoint uploaded to GCS: gs://{GCS_BUCKET}/{gcs_path}")
         except Exception as e:
-            print(f"Failed to upload checkpoint to GCS: {e}")
+            logger.error(f"Failed to upload checkpoint to GCS: {e}")
+    else:
+        logger.debug("GCS_BUCKET not set - checkpoints saved locally only")
+
 
 def load_checkpoint(model: nn.Module,
                     optimizer: torch.optim.Optimizer, 
