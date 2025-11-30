@@ -208,7 +208,7 @@ def main():
     
     # GCP settings
     parser.add_argument('--project', type=str)
-    parser.add_argument('--region~````1', type=str, default='us-central1')
+    parser.add_argument('--region', type=str, default='us-central1')
     parser.add_argument('--gcs_bucket', type=str, default='cs224w-2025-mae-gnn-central')
     
     # Machine settings
