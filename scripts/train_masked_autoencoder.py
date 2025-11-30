@@ -114,22 +114,56 @@ def eval(data_loader,
         return float('inf')
 
     total_error = 0
+    total_samples = 0
+    
     model.eval()
     with torch.no_grad():
-        for batch in data_loader:
-            batch = batch.to(device)
-            
-            batch_indices = batch.batch if hasattr(batch, 'batch') else  torch.zeros(batch.x.size(0), dtype=torch.long, device=device)
-            predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr, batch_indices)
-            total_error += eval_fn(predicted_pos, batch.pos[mask_indices])
+        for batch_idx, batch in enumerate(data_loader):
+            try:
+                batch = batch.to(device)
+                
+                batch_indices = batch.batch if hasattr(batch, 'batch') else  torch.zeros(batch.x.size(0), dtype=torch.long, device=device)
+                predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr, batch_indices)
+                
+                if len(mask_indices) == 0:
+                    logger.warning(f"Eval batch {batch_idx}: No masked nodes, skipping")
+                    continue
 
-    avg_error = total_error / len(data_loader)
+                loss = eval_fn(predicted_pos, batch.pos[mask_indices])
+                
+                if torch.isnan(loss) or torch.isinf(loss):
+                    logger.warning(f"Eval batch {batch_idx}: Invalid loss {loss.item()}")
+                    continue
+
+                total_error += loss.item()
+                total_samples += 1
+
+            except Exception as e:
+                logger.error(f"Eval batch {batch_idx}: Error {e}, skipping")
+                continue
+        
+        if total_samples == 0:
+            logger.error("No valid evaluation samples!")
+            return float('inf')
+
+    avg_error = total_error / total_samples
+
     return avg_error 
 
 def report_hyperparameter_tuning_metric(val_loss, epoch):
     """Report metric for Vertex AI Hyperparameter Tuning"""
     try:
         import hypertune
+
+        # catch inf/nan so that hyperparam tuning isn't killed
+        if val_loss is None or not isinstance(val_loss, (int, float)):
+            logger.warning(f"Invalid val_loss type: {type(val_loss)}, skipping metric report")
+            return
+
+        if not (0 < val_loss < 1e6): # Sanity check
+            logger.warning(f"Invalid val_loss value: {val_loss}, skipping metric report")
+            return
+        
         hpt = hypertune.HyperTune()
         hpt.report_hyperparameter_tuning_metric(
             hyperparameter_metric_tag='val_loss',

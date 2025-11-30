@@ -69,7 +69,7 @@ def submit_hp_job(args):
     parameter_spec = {
         'learning_rate': hpt.DoubleParameterSpec(
             min=0.00001,
-            max=0.001,
+            max=0.0001,
             scale='log'
         ),
         'hidden_dim': hpt.DiscreteParameterSpec(
@@ -90,7 +90,7 @@ def submit_hp_job(args):
             scale='linear'
         ),
         'batch_size': hpt.DiscreteParameterSpec(
-            values=[16, 32, 64],
+            values=[16, 32, 64, 128, 256],
             scale='linear'
         ),
     }
@@ -216,7 +216,7 @@ def main():
     parser.add_argument('--accelerator_type', type=str, default='NVIDIA_TESLA_T4')
     
     # HP tuning settings
-    parser.add_argument('--max_trials', type=int, default=20)
+    parser.add_argument('--max_trials', type=int, default=50)
     parser.add_argument('--parallel_trials', type=int, default=4)
     parser.add_argument('--max_failed_trials', type=int, default=5)
     
@@ -226,7 +226,7 @@ def main():
     parser.add_argument('--test_prefix', type=str, default='data_w_pos/plgems_full_casf2016.pt')
     
     # Training settings
-    parser.add_argument('--num_epochs', type=int, default=50)
+    parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--checkpoint_interval', type=int, default=10)
     
     # Build settings
