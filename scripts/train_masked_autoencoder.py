@@ -10,6 +10,8 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from torch import nn, torch
+from torch.optim.lr_scheduler import ExponentialLR
+
 from torch_geometric import seed_everything
 from torch_geometric.data import Data as PyGData
 from torch_geometric.loader import DataLoader
@@ -31,7 +33,8 @@ TODO:
 
 def train_one_epoch(data_loader, 
                     model: nn.Module, 
-                    optimizer: torch.optim.Optimizer, 
+                    optimizer: torch.optim.Optimizer,
+                    lr_scheduler: torch.optim.lr_scheduler._LRScheduler, 
                     loss_fn: Callable,
                     device: torch.device):
     """
@@ -48,6 +51,7 @@ def train_one_epoch(data_loader,
         loss = loss_fn(predicted_pos, batch.pos[mask_indices])
         loss.backward()
         optimizer.step()
+        lr_scheduler.step()
         total_loss += loss.item()
     
     avg_loss = total_loss / len(data_loader)
@@ -78,6 +82,7 @@ def main():
     
     # dataset 
     parser.add_argument('--train_data_path', type=str, required=True, help='Local path to training data.')
+    parser.add_argument('--val_data_path', type=str, required=True, help='Local path to validation data.')
     parser.add_argument('--test_data_path', type=str, required=True, help='Local path to test data.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
 
@@ -87,7 +92,8 @@ def main():
     
     # Training hyperparameters
     parser.add_argument('--num_epochs', type=int, default=150, help='Number of training epochs.')
-    parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate for the optimizer.')
+    parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for the optimizer.')
+    parser.add_argument('--learning_rate_gamma', type=float, default=0.999, help='Learning rate decay factor.')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training.')
     
     # Model architecture
@@ -118,18 +124,16 @@ def main():
     # Load training, testing, and validation data from GCS
     logger.info("Loading datasets...")
 
-    trainval_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
+    train_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
+    val_dataset = GCSPyGDataset(root="", file_paths=[args.val_data_path])   
     test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
 
     # split test dataset into validation and test sets (80-20 split)
-    val_size = int(0.2 * len(trainval_dataset))
-    train_size = len(trainval_dataset) - val_size
-    train_dataset, val_dataset = torch.utils.data.random_split(trainval_dataset, [train_size, val_size])
 
-    print(f"train dataset size: {len(train_dataset)}")
-    print(f"val dataset size: {len(val_dataset)}")
-    print(f"test dataset size: {len(test_dataset)}")
-    print(f"Example data in train dataset: {train_dataset[0]}")
+    logger.info(f"train dataset size: {len(train_dataset)}")
+    logger.info(f"val dataset size: {len(val_dataset)}")
+    logger.info(f"test dataset size: {len(test_dataset)}")
+    logger.info(f"Example data in train dataset: {train_dataset[0]}")
 
     train_loader = DataLoader(
         train_dataset,
@@ -154,18 +158,18 @@ def main():
 
     # Model
     encoder = Encoder(
-             in_channels=trainval_dataset.node_features, 
+             in_channels=train_dataset.node_features, 
              hidden_channels=args.hidden_dim, 
              num_layers=args.num_encoder_layers,
              pos_dim=3,
-             edge_dim=trainval_dataset.edge_features_dim,
+             edge_dim=train_dataset.edge_features_dim,
              skip_connection=True)
     decoder = Decoder(
              in_channels=args.hidden_dim,
              hidden_channels=args.hidden_dim,
              num_layers=args.num_decoder_layers,
              pos_dim=3,
-             edge_dim=trainval_dataset.edge_features_dim,
+             edge_dim=train_dataset.edge_features_dim,
              skip_connection=True)
     model = MaskedGeometricAutoencoder(
              encoder=encoder, 
@@ -173,19 +177,20 @@ def main():
              masking_ratio=args.masking_ratio)
     
     num_params = sum(p.numel() for p in model.parameters())
-    print(f"Number of parameters in model: {num_params}")
+    logger.info(f"Number of parameters in model: {num_params}")
 
     for m in [encoder, decoder, model]:
         m.to(device)
     
     optim = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    lr_scheduler = ExponentialLR(optim, gamma=args.learning_rate_gamma)
     epoch_initial = 0
 
     # load model and optim checkpoints if specified
     if args.load_model_path:
-        epoch_initial, checkpoint = load_checkpoint(model, optim, args.load_model_path)
+        epoch_initial, checkpoint = load_checkpoint(model, optim, lr_scheduler, args.load_model_path)
         logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
-        logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, test loss: {checkpoint["test_loss"]}')
+        logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, {checkpoint["val_loss"]}, test loss: {checkpoint["test_loss"]}')
 
     best_val_loss = float('inf')
     best_model_state = None
@@ -196,6 +201,7 @@ def main():
         train_loss = train_one_epoch(train_loader,
                                      model,
                                      optim,
+                                     lr_scheduler,
                                      l2_loss,
                                      device)
 
@@ -212,10 +218,11 @@ def main():
                 best_val_loss = val_loss
                 best_model_state = model.state_dict()
                 best_epoch = epoch
-                print(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
+                logger.info(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
 
             save_checkpoint(model,
                             optim,
+                            lr_scheduler,
                             epoch,
                             train_loss,
                             val_loss,

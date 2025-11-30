@@ -5,8 +5,8 @@ from torch import nn, Tensor
 
 from torch_geometric.typing import Adj
 from torch_geometric.utils import subgraph
-from torch_geometric.nn import global_mean_pool
-from torch_geometric.data import Data 
+import torch_geometric.nn as pyg_nn 
+from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
 
 from models.egnn import EGNN
 
@@ -229,19 +229,35 @@ class MaskedGeometricAutoencoder(nn.Module):
 
         return pos_reconstructed[mask_indices,:], mask_indices
 
-
-# ============================================================================
-# Regression head for binding affinity prediction: The encoder gives us the learned embeddings for nodes. We pool them into a graph-level representation for the binding affinity prediction task which operates on molecules not atoms. We can freeze those weights so as to train only the regression head. We use a simple linear layer.
-
-class RegressionHead(nn.Module):
+class RegressionHeadBase(nn.Module):
+    """
+    Base class for regression head for binding affinity prediction.
+    Args:
+        encoder (nn.Module): Encoder model to extract node features.
+    """
     def __init__(self,
                  encoder: nn.Module):
-        super(RegressionHead, self).__init__()
+        super(RegressionHeadBase, self).__init__()
         
         self.encoder = encoder
         self.in_channels = encoder.output_dim
         
+class LinearRegressionHead(RegressionHeadBase):
+    """
+    Global pooling followed by a linear regression head for binding affinity prediction.
+    Args:
+        encoder (nn.Module): Encoder model to extract node features.
+        global_pool (Union['str', Callable]): Global pooling method to use. (default: "global_mean_pool")
+    """
+    def __init__(self,
+                 encoder: nn.Module, 
+                 global_pool: Union['str', Callable] = "global_mean_pool"):
+        super(LinearRegressionHead, self).__init__(encoder)
         self.linear = nn.Linear(self.in_channels, 1)
+        if isinstance(global_pool, str):
+            self.global_pool = getattr(pyg_nn, global_pool)
+        else:
+            self.global_pool = global_pool
     
     def forward(self,
                 x: Tensor,
@@ -250,8 +266,114 @@ class RegressionHead(nn.Module):
                 edge_attr: Tensor,
                 batch_indices: Tensor) -> Tensor:
 
-        x_encoded, _ = self.encoder(x, pos, edge_index, edge_attr)
-        x_pooled = global_mean_pool(x_encoded, batch_indices)
-        pred = self.linear(x_pooled)
+        x, _ = self.encoder(x, pos, edge_index, edge_attr)
+        x = self.global_pool(x, batch_indices)
+        x = self.linear(x)
         
-        return pred
+        return x
+    
+class MLPRegressionHead(RegressionHeadBase):
+    """
+    MLP regression head for binding affinity prediction. 
+    order: MLP layers -> Global pooling -> Linear layer.
+    Args:
+        encoder (nn.Module): Encoder model to extract node features.
+        hidden_channels (int): Hidden dimension for MLP.
+        num_layers (int): Number of layers in MLP.
+        act (Union['str', Callable]): Activation function to use. (default: "ReLU")
+        global_pool (Union['str', Callable]): Global pooling method to use. (default: "global_mean_pool")
+    """
+    def __init__(self,
+                 encoder: nn.Module,
+                 hidden_channels: int,
+                 num_layers: int,
+                 act: Union['str', Callable] = "ReLU",
+                 global_pool: Union['str'] = "global_mean_pool"):
+        super(MLPRegressionHead, self).__init__(encoder)
+        
+        layers = []
+        input_dim = self.in_channels
+        self.hidden_channels = hidden_channels
+        for _ in range(num_layers):
+            layers.append(nn.Linear(input_dim, self.hidden_channels))
+            if isinstance(act, str):
+                layers.append(getattr(nn, act)())
+            else:
+                layers.append(act)
+            input_dim = self.hidden_channels
+        
+        self.mlp = nn.Sequential(*layers)
+        self.linear = nn.Linear(self.hidden_channels, 1)
+        if isinstance(global_pool, str):
+            self.global_pool = getattr(pyg_nn, global_pool)
+        else:
+            self.global_pool = global_pool
+    
+    def forward(self,
+                x: Tensor,
+                pos: Tensor,
+                edge_index: Adj,
+                edge_attr: Tensor,
+                batch_indices: Tensor) -> Tensor:
+
+        x, _ = self.encoder(x, pos, edge_index, edge_attr)
+        x = self.mlp(x)
+        x = self.global_pool(x, batch_indices)
+        x = self.linear(x)
+        
+        return x
+    
+class EGNNRegressionHead(RegressionHeadBase):
+    """
+    EGNN regression head for binding affinity prediction.
+    order: EGNN layers -> Global pooling -> Linear layer.
+    Args:
+        encoder (nn.Module): Encoder model to extract node features.
+        hidden_channels (int): Hidden dimension for EGNN layers.
+        num_layers (int): Number of EGNN layers.
+        edge_dim (int): Dimension of edge features.
+        act (Union['str', Callable]): Activation function to use. (default: "SiLU")
+        skip_connection (bool): Whether to use skip connections. (default: False)
+        global_pool (Union['str', Callable]): Global pooling method to use. (default: "global_mean_pool")
+        """
+    def __init__(self,
+             encoder: nn.Module,
+             hidden_channels: int,
+             num_layers: int, 
+             edge_dim: int,
+             act: Union['str', Callable] = "SiLU",
+             skip_connection: bool = False, 
+             global_pool: Union['str', Callable] = "global_mean_pool"):
+        super(EGNNRegressionHead, self).__init__(encoder)
+    
+        assert(not skip_connection or hidden_channels == self.in_channels), "Hidden channels must match encoder output dimension"
+        self.hidden_channels = hidden_channels
+        self.egnn = EGNN(
+            in_channels=self.in_channels,
+            hidden_channels=self.hidden_channels,
+            num_layers=num_layers,
+            pos_dim=3,
+            edge_dim=edge_dim,
+            update_pos=False,
+            act=act,
+            skip_connection=skip_connection)
+        if isinstance(global_pool, str):
+            self.global_pool = getattr(pyg_nn, global_pool)
+        else:
+            self.global_pool = global_pool
+        self.linear = nn.Linear(self.hidden_channels, 1)
+
+    def forward(self, 
+                x: Tensor,
+                pos: Tensor,
+                edge_index: Adj,
+                edge_attr: Tensor,
+                batch_indices: Tensor) -> Tensor:
+        
+        x, _ = self.encoder(x, pos, edge_index, edge_attr)
+        x, _ = self.egnn(x, pos, edge_index, edge_attr)
+        x = self.global_pool(x, batch_indices)
+        x = self.linear(x)
+        
+        return x
+        
