@@ -23,6 +23,3 @@ docker run --rm \
 
 echo ""
 echo "Tests completed successfully in Docker env!"
-EOF
-
-chmod +x test_in_docker.sh

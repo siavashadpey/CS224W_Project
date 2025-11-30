@@ -169,6 +169,8 @@ def submit_hp_job(args):
         max_failed_trial_count=args.max_failed_trials,
         search_algorithm=None, # 'bayesian',
         measurement_selection='best',
+    #    restart_job_on_worker_restart=False,
+    #    base_output_dir=f"gs://{gcs_bucket}/hptuning/{job_name}",
     )
     
     print(f"Submitting hyperparameter tuning job...")
@@ -176,19 +178,7 @@ def submit_hp_job(args):
     # ============================================
     # RUN THE JOB
     # ============================================
-    hp_job.run(
-        restart_job_on_worker_restart=False,
-        sync=False,
-        base_output_dir=f"gs://{gcs_bucket}/hptuning/{job_name}",
-        environment_variables=environment_variables,
-        replica_count=1,
-        machine_type=args.machine_type,
-        accelerator_type=args.accelerator_type,
-        accelerator_count=1,
-        boot_disk_type="pd-ssd",
-        boot_disk_size_gb=100,
-        args=training_args,
-    )
+    hp_job.run()
     
     print("\n" + "=" * 60)
     print("Hyperparameter Tuning Job Submitted!")

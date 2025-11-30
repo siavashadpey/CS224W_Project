@@ -132,7 +132,7 @@ def report_hyperparameter_tuning_metric(val_loss, epoch):
         import hypertune
         hpt = hypertune.HyperTune()
         hpt.report_hyperparameter_tuning_metric(
-            hyperparameter_tuning_metric='val_loss',
+            hyperparameter_metric_tag='val_loss',
             metric_value=val_loss,
             global_step=epoch
         )
