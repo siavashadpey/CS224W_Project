@@ -47,7 +47,7 @@ class EGNNConv(MessagePassing):
         self.skip_connection = skip_connection
         self.pos_dim = pos_dim
         self.eps = 1e-8  # Epsilon for numerical stability
-        self.clamp = True
+        self.clamp = False
         self.clamp_magnitude = 10.0
         self.reset_parameters()
     
