@@ -15,7 +15,7 @@ from torch_geometric.loader import DataLoader
 
 seed_everything(1313)
 
-from models.bimolecular_affinity_models import Encoder, LinearRegressionHead, MLPRegressionHead, EGNNRegressionHead, EGNNMLPRegressionHead
+from models.bimolecular_affinity_models import Encoder, LinearRegressionHead, MLPRegressionHead, EGNNRegressionHead, EGNNMLPRegressionHead, Set2SetRegressionHead, GlobalAttentionRegressionHead
 from utils.checkpoint_utils import save_checkpoint, load_checkpoint
 from utils.gcs_dataset_loader import GCSPyGDataset
 from utils.eval import pearson_correlation_coefficient
@@ -101,7 +101,7 @@ def main():
     
     # Regression head args 
     parser.add_argument('--pooling_method', type=str, default='global_mean_pool', help='Global pooling method: global_mean_pool, global_add_pool, global_max_pool.')
-    parser.add_argument('--head_method', type=str, default='mlp', help='Type of regression head: linear, mlp, egnn, egnn_mlp.')
+    parser.add_argument('--head_method', type=str, default='mlp', help='Type of regression head: linear, mlp, egnn, egnn_mlp, set2set, global_attention.')
     parser.add_argument('--head_hidden_channels', type=int, default=64, help='Hidden channels in regression head (if applicable)')
     parser.add_argument('--head_num_layers', type=int, default=2, help='Number of layers in regression head (if applicable)')
 
@@ -232,6 +232,13 @@ def main():
             gnn_act="SiLU",
             global_pool=args.pooling_method,
             mlp_act="ReLU")
+    elif args.head_method == 'set2set':
+        model = Set2SetRegressionHead(
+            encoder=encoder,
+            processing_steps=3,
+            num_layers=1)
+    elif args.head_method == 'global_attention':
+        model = GlobalAttentionRegressionHead(encoder=encoder)
     else:
         raise ValueError(f"Unknown head method: {args.head_method}")
 

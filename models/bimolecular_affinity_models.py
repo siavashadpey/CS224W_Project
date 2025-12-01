@@ -6,7 +6,7 @@ from torch import nn, Tensor
 from torch_geometric.typing import Adj
 from torch_geometric.utils import subgraph
 import torch_geometric.nn as pyg_nn 
-from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
+from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool, Set2Set, GlobalAttention
 
 from models.egnn import EGNN
 
@@ -441,6 +441,65 @@ class EGNNMLPRegressionHead(RegressionHeadBase):
         x, _ = self.egnn(x, pos, edge_index, edge_attr)
         x = self.global_pool(x, batch_indices)
         x = self.mlp(x)
+        x = self.linear(x)
+        
+        return x
+
+class Set2SetRegressionHead(RegressionHeadBase):
+    """
+    Set2Set pooling followed by a linear regression head. If A/B testing this against the simple linear regression head reveals that it makes a difference, we can implement set2set pooling in the other heads too.
+    LSTM-based attention pooling comes from https://arxiv.org/abs/1704.01212  link  focused.
+    Args:
+        encoder (nn.Module): Encoder 
+        processing_steps (int): Number of LSTM processing steps, (defaulting to 3
+        num_layers (int): Number of LSTM layers, defaulting to 1
+    """
+    def __init__(self,
+                 encoder: nn.Module,
+                 processing_steps: int = 3,
+                 num_layers: int = 1):
+        super(Set2SetRegressionHead, self).__init__(encoder)
+        
+        #we have to handle twice the input dim
+        self.set2set = Set2Set(self.in_channels, processing_steps, num_layers)
+        self.linear = nn.Linear(2 * self.in_channels, 1)
+    
+    def forward(self,
+                x: Tensor,
+                pos: Tensor,
+                edge_index: Adj,
+                edge_attr: Tensor,
+                batch_indices: Tensor) -> Tensor:
+
+        x, _ = self.encoder(x, pos, edge_index, edge_attr)
+        x = self.set2set(x, batch_indices)
+        x = self.linear(x)
+        
+        return x
+
+class GlobalAttentionRegressionHead(RegressionHeadBase):
+    """
+    Global attention pooling followed by a linear regression head.
+    Args:
+        encoder (nn.Module): Encoder 
+    """
+    def __init__(self,
+                 encoder: nn.Module):
+        super(GlobalAttentionRegressionHead, self).__init__(encoder)
+        
+        gate_nn = nn.Linear(self.in_channels, 1)
+        self.global_attn = GlobalAttention(gate_nn)
+        self.linear = nn.Linear(self.in_channels, 1)
+    
+    def forward(self,
+                x: Tensor,
+                pos: Tensor,
+                edge_index: Adj,
+                edge_attr: Tensor,
+                batch_indices: Tensor) -> Tensor:
+
+        x, _ = self.encoder(x, pos, edge_index, edge_attr)
+        x = self.global_attn(x, batch_indices)
         x = self.linear(x)
         
         return x
