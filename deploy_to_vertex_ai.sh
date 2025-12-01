@@ -18,6 +18,8 @@ export USE_GPU="${USE_GPU:-true}"
 export MACHINE_TYPE="${MACHINE_TYPE:-n1-standard-4}"
 export GPU_TYPE="${GPU_TYPE:-NVIDIA_TESLA_T4}"
 
+export CHECKPOINT_ID="${CHECKPOINT_ID}"
+
 # export GCS_BUCKET="cs224w-2025-mae-gnn-bucket"
 export GCS_BUCKET="cs224w-2025-mae-gnn-central"
 
@@ -107,6 +109,7 @@ REGION = "${REGION}"
 IMAGE_URI = "${IMAGE_URI}"
 JOB_NAME = "${JOB_NAME}"
 GCS_BUCKET = "${GCS_BUCKET}"
+CHECKPOINT_ID = "${CHECKPOINT_ID}"
 MACHINE_TYPE = "${MACHINE_TYPE}"
 GPU_TYPE = "${GPU_TYPE}"
 USE_GPU = "${USE_GPU}"
@@ -131,6 +134,7 @@ job.run(
     accelerator_count=1 if "${USE_GPU}" == "true" else 0,
     environment_variables={
         "GCS_BUCKET": GCS_BUCKET,  # Needed for checkpointing
+        "CHECKPOINT_ID": CHECKPOINT_ID, 
         "TRAIN_PREFIX": "${TRAIN_PREFIX}",
         "VAL_PREFIX": "${VAL_PREFIX}",
         "TEST_PREFIX": "${TEST_PREFIX}",
@@ -155,7 +159,7 @@ job.run(
 
 print(f"\nJob submitted: {JOB_NAME}")
 print(f"   GCS Bucket: {GCS_BUCKET}")
-print(f"   Checkpoints will be saved to: gs://{GCS_BUCKET}/checkpoints/")
+print(f"   Checkpoints will be saved to: gs://{GCS_BUCKET}/checkpoints/trial_{CHECKPOINT_ID}")
 PYTHON_EOF
 
 echo ""
