@@ -41,6 +41,7 @@ def train_one_epoch(data_loader,
     total_loss = 0
     valid_batch_count = 0
     nan_batch_count = 0
+    skipped_high_loss = 0
 
     for batch_idx, batch in enumerate(data_loader):
         batch = batch.to(device)
@@ -58,6 +59,16 @@ def train_one_epoch(data_loader,
 
             loss = loss_fn(predicted_pos, batch.pos[mask_indices])
             
+            # loss thresholding
+            if loss.item() > 1000.0:  # Loss too high
+                logger.warning(f"Batch {batch_idx}: Loss {loss.item():.4f} exceeds threshold - skipping!")
+                logger.warning(f"  Num nodes: {batch.x.shape[0]}, Num masked: {len(mask_indices)}")
+                logger.warning(f"  Predicted range: [{predicted_pos.min().item():.4f}, {predicted_pos.max().item():.4f}]")
+                logger.warning(f"  Ground truth range: [{batch.pos[mask_indices].min().item():.4f}, {batch.pos[mask_indices].max().item():.4f}]")
+                skipped_high_loss += 1
+                continue
+
+
             if torch.isnan(loss) or torch.isinf(loss):
                 logger.warning(f"Batch {batch_idx}: Invalid loss {loss.item()} - skipping!")
                 nan_batch_count += 1
@@ -65,9 +76,37 @@ def train_one_epoch(data_loader,
 
             loss.backward()
 
+            # Check gradients BEFORE clipping
+            total_grad_norm = 0.0
+            max_grad_norm = 0.0
+            for param in model.parameters():
+                if param.grad is not None:
+                    param_norm = param.grad.data.norm(2).item()
+                    total_grad_norm += param_norm ** 2
+                    max_grad_norm = max(max_grad_norm, param_norm)
+            total_grad_norm = total_grad_norm ** 0.5
+            
+            # Skip batches with exploding gradients
+            if total_grad_norm > 10000.0:  # Gradient explosion threshold
+                logger.warning(f"Batch {batch_idx}: Gradient explosion detected!")
+                logger.warning(f"  Total grad norm: {total_grad_norm:.4f}")
+                logger.warning(f"  Max param grad norm: {max_grad_norm:.4f}")
+                logger.warning(f"  Loss was: {loss.item():.4f}")
+                logger.warning(f"  Skipping batch to prevent model corruption")
+                optimizer.zero_grad()  # Clear the bad gradients
+                skipped_high_loss += 1
+                continue
+
             # *** Add gradient clipping to avoid exploding gradients causing NaN loss
             # clip_grad_norm_ does in-place update and returns original to grad_norm
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            # Check for NaN gradients after clipping
+            has_nan_grad = False
+            for param in model.parameters():
+                if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
+                    has_nan_grad = True
+                    break
 
             # Check for NaN gradients
             has_nan_grad = False
@@ -98,7 +137,7 @@ def train_one_epoch(data_loader,
         return float('inf')
     
     avg_loss = total_loss / valid_batch_count
-    logger.info(f"Epoch summary: valid_batches={valid_batch_count}, nan_batches={nan_batch_count}, avg_loss={avg_loss:.4f}")
+    logger.info(f"Epoch summary: valid_batches={valid_batch_count}, nan_batches={nan_batch_count}, skipped_high_loss={skipped_high_loss}, avg_loss={avg_loss:.4f}")
     
     return avg_loss
 
