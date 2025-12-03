@@ -41,7 +41,7 @@ def train_one_epoch(data_loader,
     total_loss = 0
     valid_batch_count = 0
     nan_batch_count = 0
-    skipped_high_loss = 0
+    skipped_count = 0
 
     for batch_idx, batch in enumerate(data_loader):
         batch = batch.to(device)
@@ -54,24 +54,22 @@ def train_one_epoch(data_loader,
         
             # Check masking
             if len(mask_indices) == 0:
+                skipped_count += 1
                 logger.warning(f"Batch {batch_idx}: No nodes masked - skipping!")
                 continue
 
             loss = loss_fn(predicted_pos, batch.pos[mask_indices])
             
             # loss thresholding
-            if loss.item() > 1000.0:  # Loss too high
-                logger.warning(f"Batch {batch_idx}: Loss {loss.item():.4f} exceeds threshold - skipping!")
-                logger.warning(f"  Num nodes: {batch.x.shape[0]}, Num masked: {len(mask_indices)}")
-                logger.warning(f"  Predicted range: [{predicted_pos.min().item():.4f}, {predicted_pos.max().item():.4f}]")
-                logger.warning(f"  Ground truth range: [{batch.pos[mask_indices].min().item():.4f}, {batch.pos[mask_indices].max().item():.4f}]")
-                skipped_high_loss += 1
-                continue
-
+            if loss_value > 1000.0:  # Loss too high
+                logger.warning(f"Batch {batch_idx}: Loss {loss_value:.4f} > 1000, Num nodes: {batch.x.shape[0]}, Num masked: {len(mask_indices)}, Predicted range: [{predicted_pos.min().item():.4f}, {predicted_pos.max().item():.4f}], Ground truth range: [{batch.pos[mask_indices].min().item():.4f}, {batch.pos[mask_indices].max().item():.4f}]")
+                #skipped_count += 1
+                #continue
 
             if torch.isnan(loss) or torch.isinf(loss):
                 logger.warning(f"Batch {batch_idx}: Invalid loss {loss.item()} - skipping!")
-                nan_batch_count += 1
+                nan_count += 1
+                skipped_count += 1
                 continue
 
             loss.backward()
@@ -88,14 +86,17 @@ def train_one_epoch(data_loader,
             
             # Skip batches with exploding gradients
             if total_grad_norm > 10000.0:  # Gradient explosion threshold
-                logger.warning(f"Batch {batch_idx}: Gradient explosion detected!")
-                logger.warning(f"  Total grad norm: {total_grad_norm:.4f}")
-                logger.warning(f"  Max param grad norm: {max_grad_norm:.4f}")
-                logger.warning(f"  Loss was: {loss.item():.4f}")
-                logger.warning(f"  Skipping batch to prevent model corruption")
-                optimizer.zero_grad()  # Clear the bad gradients
-                skipped_high_loss += 1
-                continue
+                logger.warning(f"Batch {batch_idx}: Max grad norm={max_grad_norm}, Exploding gradient norm={total_grad_norm:.2f}")
+                exploding_count += 1
+                # skipped_count += 1
+                # optimizer.zero_grad()  # Clear the bad gradients
+                # continue
+            elif total_grad_norm > 1000.0:
+                moderate_count += 1
+                if batch_idx % 100 == 0:
+                    logger.warning(f"Batch {batch_idx}: Moderate gradient norm={total_grad_norm:.2f}")
+            else:
+                normal_count += 1
 
             # *** Add gradient clipping to avoid exploding gradients causing NaN loss
             # clip_grad_norm_ does in-place update and returns original to grad_norm
@@ -115,8 +116,9 @@ def train_one_epoch(data_loader,
                     has_nan_grad = True
                     break
             if has_nan_grad:
-                logger.warning(f"Batch {batch_idx}: NaN gradient detected - skipping!")
-                nan_batch_count += 1
+                logger.warning(f"Batch {batch_idx}: NaN gradient detected after clipping- skipping!")
+                nan_count += 1
+                skipped_count += 1
                 optimizer.zero_grad()
                 continue
 
@@ -137,7 +139,7 @@ def train_one_epoch(data_loader,
         return float('inf')
     
     avg_loss = total_loss / valid_batch_count
-    logger.info(f"Epoch summary: valid_batches={valid_batch_count}, nan_batches={nan_batch_count}, skipped_high_loss={skipped_high_loss}, avg_loss={avg_loss:.4f}")
+    logger.info(f"Epoch summary: valid_batches={valid_batch_count}, nan_batches={nan_batch_count}, skipped_count={skipped_count}, avg_loss={avg_loss:.4f}")
     
     return avg_loss
 
