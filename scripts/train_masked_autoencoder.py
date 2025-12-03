@@ -13,6 +13,7 @@ from torch import nn, torch
 from torch_geometric import seed_everything
 from torch_geometric.data import Data as PyGData
 
+torch.autograd.set_detect_anomaly(True)
 
 seed_everything(1313)
 
@@ -33,15 +34,21 @@ def train_one_epoch(data_loader,
                     model: nn.Module, 
                     optimizer: torch.optim.Optimizer, 
                     loss_fn: Callable,
-                    device: torch.device):
+                    device: torch.device,
+                    epoch: int):
     """
     Train the model for one epoch.
     """
     model.train()
     total_loss = 0
     valid_batch_count = 0
-    nan_batch_count = 0
-    skipped_high_loss = 0
+
+    # Tracking stats
+    exploding_count = 0
+    moderate_count = 0
+    normal_count = 0
+    skipped_count = 0
+    nan_count = 0
 
     for batch_idx, batch in enumerate(data_loader):
         batch = batch.to(device)
@@ -54,24 +61,27 @@ def train_one_epoch(data_loader,
         
             # Check masking
             if len(mask_indices) == 0:
-                logger.warning(f"Batch {batch_idx}: No nodes masked - skipping!")
+                skipped_count += 1
+#                logger.warning(f"Batch {batch_idx}: No nodes masked - skipping!")
                 continue
 
             loss = loss_fn(predicted_pos, batch.pos[mask_indices])
+            loss_value = loss.item()
             
             # loss thresholding
-            if loss.item() > 1000.0:  # Loss too high
-                logger.warning(f"Batch {batch_idx}: Loss {loss.item():.4f} exceeds threshold - skipping!")
+            if loss_value > 1000.0:  # Loss too high
+                logger.warning(f"Batch {batch_idx}: Loss {loss_value:.4f} exceeds threshold - skipping!")
                 logger.warning(f"  Num nodes: {batch.x.shape[0]}, Num masked: {len(mask_indices)}")
                 logger.warning(f"  Predicted range: [{predicted_pos.min().item():.4f}, {predicted_pos.max().item():.4f}]")
                 logger.warning(f"  Ground truth range: [{batch.pos[mask_indices].min().item():.4f}, {batch.pos[mask_indices].max().item():.4f}]")
-                skipped_high_loss += 1
+                skipped_count += 1
                 continue
 
 
             if torch.isnan(loss) or torch.isinf(loss):
-                logger.warning(f"Batch {batch_idx}: Invalid loss {loss.item()} - skipping!")
-                nan_batch_count += 1
+                # logger.warning(f"Batch {batch_idx}: Invalid loss {loss.item()} - skipping!")
+                nan_count += 1
+                skipped_count += 1
                 continue
 
             loss.backward()
@@ -88,14 +98,23 @@ def train_one_epoch(data_loader,
             
             # Skip batches with exploding gradients
             if total_grad_norm > 10000.0:  # Gradient explosion threshold
-                logger.warning(f"Batch {batch_idx}: Gradient explosion detected!")
-                logger.warning(f"  Total grad norm: {total_grad_norm:.4f}")
-                logger.warning(f"  Max param grad norm: {max_grad_norm:.4f}")
-                logger.warning(f"  Loss was: {loss.item():.4f}")
-                logger.warning(f"  Skipping batch to prevent model corruption")
+                # logger.warning(f"Batch {batch_idx}: Gradient explosion detected!")
+                # logger.warning(f"  Total grad norm: {total_grad_norm:.4f}")
+                # logger.warning(f"  Max param grad norm: {max_grad_norm:.4f}")
+                # logger.warning(f"  Loss was: {loss.item():.4f}")
+                # logger.warning(f"  Skipping batch to prevent model corruption")
+                exploding_count += 1
+                skipped_count += 1
                 optimizer.zero_grad()  # Clear the bad gradients
-                skipped_high_loss += 1
+                if batch_idx % 100 == 0:
+                    logger.warning(f"Batch {batch_idx}: Exploding gradient norm={total_grad_norm:.2f}")
                 continue
+            elif total_grad_norm > 1000.0:
+                moderate_count += 1
+                if batch_idx % 100 == 0:
+                    logger.warning(f"Batch {batch_idx}: Moderate gradient norm={total_grad_norm:.2f}")
+            else:
+                normal_count += 1
 
             # *** Add gradient clipping to avoid exploding gradients causing NaN loss
             # clip_grad_norm_ does in-place update and returns original to grad_norm
@@ -108,38 +127,42 @@ def train_one_epoch(data_loader,
                     has_nan_grad = True
                     break
 
-            # Check for NaN gradients
-            has_nan_grad = False
-            for param in model.parameters():
-                if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
-                    has_nan_grad = True
-                    break
             if has_nan_grad:
-                logger.warning(f"Batch {batch_idx}: NaN gradient detected - skipping!")
-                nan_batch_count += 1
+             #   logger.warning(f"Batch {batch_idx}: NaN gradient detected - skipping!")
+                nan_count += 1
+                skipped_count += 1
                 optimizer.zero_grad()
                 continue
 
             optimizer.step()
-            total_loss += loss.item()
+            total_loss += loss_value
             valid_batch_count += 1
 
             if batch_idx % 10 == 0:
-                logger.info(f"Batch {batch_idx}: loss={loss.item():.4f}, grad_norm={grad_norm:.4f}")
+                logger.info(f"Batch {batch_idx}: loss={loss_value:.4f}, grad_norm={total_grad_norm:.4f}")
 
         except Exception as e:
             logger.error(f"Batch {batch_idx}: Error {e} - skipping!")
-            nan_batch_count += 1
+            skipped_count += 1
             continue
 
     if valid_batch_count == 0:
         logger.error("No valid batches in epoch!")
-        return float('inf')
+        return float('inf'), 100.0
     
     avg_loss = total_loss / valid_batch_count
-    logger.info(f"Epoch summary: valid_batches={valid_batch_count}, nan_batches={nan_batch_count}, skipped_high_loss={skipped_high_loss}, avg_loss={avg_loss:.4f}")
-    
-    return avg_loss
+    total_processed = exploding_count + moderate_count + normal_count
+    exploding_pct = 100.0 * exploding_count / max(1, total_processed)
+
+    logger.info(f"Epoch {epoch} summary:")
+    logger.info(f"   Valid_batches={valid_batch_count}")
+    logger.info(f"   Skipped batches: {skipped_count}")
+    logger.info(f"   Normal gradients: {normal_count}")
+    logger.info(f"   Moderate gradients: {moderate_count}")
+    logger.info(f"   EXPLODING gradients: {exploding_count} ({exploding_pct:.2f}%)")
+    logger.info(f"   Avg loss: {avg_loss:.4f}")
+
+    return avg_loss, exploding_pct
 
 def eval(data_loader,
          model: nn.Module, 
@@ -189,7 +212,7 @@ def eval(data_loader,
 
     return avg_error 
 
-def report_hyperparameter_tuning_metric(val_loss, epoch):
+def report_hyperparameter_tuning_metric(val_loss, epoch, exploding_grad_pct=None):
     """Report metric for Vertex AI Hyperparameter Tuning"""
     try:
         import hypertune
@@ -209,7 +232,18 @@ def report_hyperparameter_tuning_metric(val_loss, epoch):
             metric_value=val_loss,
             global_step=epoch
         )
-        logger.info(f"Reported val_loss={val_loss:.4f} to hyperparameter tuning at epoch {epoch}")
+
+        if exploding_grad_pct is not None and 0 <= exploding_grad_pct <= 100:
+            hpt.report_hyperparameter_tuning_metric(
+                hyperparameter_metric_tag='exploding_grad_pct',
+                metric_value=float(exploding_grad_pct),
+                global_step=epoch
+            )
+            logger.info(f"Reported val_loss={val_loss:.4f}, exploding_grad_pct={exploding_grad_pct:.2f}% at epoch {epoch}")
+        else:
+            logger.info(f"Reported val_loss={val_loss:.4f} at epoch {epoch}")
+        
+    
     except ImportError:
         logger.debug("hypertune not available, skipping metric reporting")
     except Exception as e:
@@ -245,6 +279,8 @@ def main():
     parser.add_argument('--checkpoint_interval', type=int, default=1, help='Periodically save checkpoints each number of epochs.')
 
     args = parser.parse_args()
+
+    logger.info(args)
 
     # --- Initialize Logging ---
     # setup logging for Vertex AI
@@ -318,26 +354,36 @@ def main():
 
     # Training loop
     for epoch in range(epoch_initial, args.num_epochs):
-        train_loss = train_one_epoch(train_loader,
+        train_loss, exploding_grad_pct = train_one_epoch(train_loader,
                                      model,
                                      optim,
                                      l2_loss,
-                                     device)
+                                     device,
+                                     epoch)
 
+         # Check if training diverged
+        if train_loss == float('inf') or train_loss != train_loss:
+            logger.error(f"Training diverged at epoch {epoch}")
+            sys.exit(1)
+        
         val_loss = eval(val_loader, model, l2_loss, device)
 
+        if val_loss == float('inf') or val_loss != val_loss:
+            logger.error(f"Validation failed at epoch {epoch}")
+            sys.exit(1)
+
         # Report to hyperparameter tuning service EVERY epoch
-        report_hyperparameter_tuning_metric(val_loss, epoch)
+        report_hyperparameter_tuning_metric(val_loss, epoch, exploding_grad_pct)
 
         # Track best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_state = model.state_dict()
             best_epoch = epoch
-            print(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
+            logger.info(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
 
         # Log progress every epoch
-        logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, ExplodingGrad={exploding_grad_pct:.2f}%")
 
         # Save checkpoint periodically
         if (epoch+1) % args.checkpoint_interval == 0:

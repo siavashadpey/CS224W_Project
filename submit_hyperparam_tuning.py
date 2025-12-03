@@ -99,7 +99,8 @@ def submit_hp_job(args):
     # OPTIMIZATION METRIC
     # ============================================
     metric_spec = {
-        'val_loss': 'minimize'
+        'val_loss': 'minimize',
+        'exploding_grad_pct': 'minimize'  # secondary metric for analysis
     }
     
     # ============================================
@@ -153,6 +154,7 @@ def submit_hp_job(args):
     custom_job = aiplatform.jobs.CustomJob(
         display_name=f"{job_name}-base",
         worker_pool_specs=worker_pool_specs,
+        base_output_dir=f"gs://{gcs_bucket}/hptuning/{job_name}",
     )
     
     # ============================================
@@ -161,16 +163,17 @@ def submit_hp_job(args):
     
     hp_job = aiplatform.HyperparameterTuningJob(
         display_name=job_name,
+
         custom_job=custom_job,
         metric_spec=metric_spec,
         parameter_spec=parameter_spec,
+  
         max_trial_count=args.max_trials,
         parallel_trial_count=args.parallel_trials,
         max_failed_trial_count=args.max_failed_trials,
         search_algorithm=None, # 'bayesian',
         measurement_selection='best',
     #    restart_job_on_worker_restart=False,
-    #    base_output_dir=f"gs://{gcs_bucket}/hptuning/{job_name}",
     )
     
     print(f"Submitting hyperparameter tuning job...")
