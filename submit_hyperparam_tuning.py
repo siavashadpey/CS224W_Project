@@ -85,12 +85,12 @@ def submit_hp_job(args):
             scale='linear'
         ),
         'masking_ratio': hpt.DoubleParameterSpec(
-            min=0.3,
+            min=0.005,
             max=0.6,
             scale='linear'
         ),
         'batch_size': hpt.DiscreteParameterSpec(
-            values=[16, 32, 64, 128, 256],
+            values=[16, 32, 64],
             scale='linear'
         ),
     }
@@ -99,7 +99,7 @@ def submit_hp_job(args):
     # OPTIMIZATION METRIC
     # ============================================
     metric_spec = {
-        'val_loss': 'minimize',
+#        'val_loss': 'minimize',
         'exploding_grad_pct': 'minimize'  # secondary metric for analysis
     }
     
