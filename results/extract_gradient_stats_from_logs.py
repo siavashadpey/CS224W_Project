@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Extract gradient statistics from Vertex AI training job logs using gcloud CLI
+Works with multi-line log formats
 """
 import argparse
 import re
@@ -21,7 +22,7 @@ def run_gcloud_logs(project_id, filter_str, limit=10000):
         '--format=json'
     ]
     
-    print(f"Running: {' '.join(cmd)}")
+    print(f"Running gcloud logs query...")
     
     result = subprocess.run(cmd, capture_output=True, text=True)
     
@@ -42,30 +43,90 @@ def run_gcloud_logs(project_id, filter_str, limit=10000):
         return []
 
 
-def extract_gradient_from_message(message):
-    """Extract exploding gradient percentage from various log formats"""
+def extract_epoch_from_logs(logs):
+    """
+    Extract epoch summaries from logs, handling multi-line format
     
-    # Pattern 1: [GRADIENT_STATS] epoch=5, exploding_grad_pct=12.34%
-    match1 = re.search(r'\[GRADIENT_STATS\].*epoch=(\d+).*exploding_grad_pct=([\d.]+)%', message)
-    if match1:
-        return int(match1.group(1)), float(match1.group(2))
+    Your format:
+    Line 1: "Epoch 5 summary:"
+    Line 2: "   Valid_batches=823"
+    Line 3: "   Skipped batches: 0"
+    Line 4: "   Normal gradients: 800"
+    Line 5: "   Moderate gradients: 20"
+    Line 6: "   EXPLODING gradients: 3 (0.37%)"
+    Line 7: "   Avg loss: 2.5"
+    """
     
-    # Pattern 2: EXPLODING gradients: 5 (12.34%)
-    match2 = re.search(r'EXPLODING gradients:\s*(\d+)\s*\(([\d.]+)%\)', message)
-    if match2:
-        return None, float(match2.group(2))
+    # Group logs by timestamp (within 1 second = same epoch summary)
+    epoch_summaries = []
     
-    # Pattern 3: ExplodingGrad=12.34%
-    match3 = re.search(r'ExplodingGrad=([\d.]+)%', message)
-    if match3:
-        return None, float(match3.group(1))
+    # Sort logs by timestamp
+    logs_sorted = sorted(logs, key=lambda x: x.get('timestamp', ''))
     
-    # Pattern 4: exploding_grad_pct=12.34 (without %)
-    match4 = re.search(r'exploding_grad_pct=([\d.]+)(?!%)', message)
-    if match4:
-        return None, float(match4.group(1))
+    i = 0
+    while i < len(logs_sorted):
+        entry = logs_sorted[i]
+        message = entry.get('jsonPayload', {}).get('message', '')
+        
+        if not message:
+            message = entry.get('textPayload', '')
+        
+        # Check if this is an epoch summary start
+        epoch_match = re.search(r'Epoch (\d+) summary:', message)
+        
+        if epoch_match:
+            epoch = int(epoch_match.group(1))
+            timestamp = entry.get('timestamp', '')
+            
+            # Collect the next few lines (within 2 seconds)
+            summary_lines = [message]
+            j = i + 1
+            
+            while j < len(logs_sorted) and j < i + 10:  # Look ahead up to 10 lines
+                next_entry = logs_sorted[j]
+                next_timestamp = next_entry.get('timestamp', '')
+                next_message = next_entry.get('jsonPayload', {}).get('message', '')
+                
+                if not next_message:
+                    next_message = next_entry.get('textPayload', '')
+                
+                # Check if timestamps are close (within 2 seconds)
+                try:
+                    time_diff = abs((datetime.fromisoformat(timestamp.replace('Z', '+00:00')) - 
+                                   datetime.fromisoformat(next_timestamp.replace('Z', '+00:00'))).total_seconds())
+                    
+                    if time_diff <= 2:
+                        summary_lines.append(next_message)
+                    else:
+                        break
+                except:
+                    # If timestamp parsing fails, just include the line
+                    summary_lines.append(next_message)
+                
+                j += 1
+            
+            # Combine all lines into one string
+            combined_summary = ' '.join(summary_lines)
+            
+            # Extract exploding gradient percentage
+            exploding_match = re.search(r'EXPLODING gradients:\s*(\d+)\s*\(([\d.]+)%\)', combined_summary)
+            
+            if exploding_match:
+                exploding_count = int(exploding_match.group(1))
+                exploding_pct = float(exploding_match.group(2))
+                
+                epoch_summaries.append({
+                    'epoch': epoch,
+                    'exploding_grad_pct': exploding_pct,
+                    'exploding_count': exploding_count,
+                    'timestamp': timestamp
+                })
+                
+                print(f"  Found: Epoch {epoch}, exploding={exploding_pct}%")
+        
+        i += 1
     
-    return None, None
+    return epoch_summaries
 
 
 def extract_from_hp_tuning_job(job_name, project_id, region):
@@ -109,49 +170,47 @@ def extract_from_hp_tuning_job(job_name, project_id, region):
     for trial_info in trial_data:
         trial_id = trial_info['trial_id']
         
-        # Query logs for this specific trial - BROADER SEARCH
+        # Query logs for this specific trial
+        # Look for "Epoch" and "summary" in the logs
         filter_str = f'''
 resource.type="aiplatform.googleapis.com/CustomJob"
 labels.aiplatform_hyperparameter_tuning_job_id="{job_id}"
 labels.trial_id="{trial_id}"
-(jsonPayload.message=~"GRADIENT_STATS" OR 
- jsonPayload.message=~"EXPLODING gradients" OR
- jsonPayload.message=~"ExplodingGrad")
+jsonPayload.message=~"Epoch.*summary|EXPLODING gradients"
 '''
         
-        print(f"Fetching logs for trial {trial_id}...")
+        print(f"\nFetching logs for trial {trial_id}...")
         
         logs = run_gcloud_logs(project_id, filter_str, limit=5000)
         
         if logs:
-            print(f"  Found {len(logs)} log entries for trial {trial_id}")
-        
-        exploding_pcts = []
-        
-        for entry in logs:
-            message = entry.get('jsonPayload', {}).get('message', '')
+            print(f"  Retrieved {len(logs)} log entries")
             
-            if not message:
-                message = entry.get('textPayload', '')
+            # Extract epoch summaries
+            epoch_summaries = extract_epoch_from_logs(logs)
             
-            epoch, pct = extract_gradient_from_message(message)
-            
-            if pct is not None:
-                exploding_pcts.append(pct)
-        
-        # Add gradient stats to trial info
-        if exploding_pcts:
-            trial_info['avg_exploding_grad_pct'] = sum(exploding_pcts) / len(exploding_pcts)
-            trial_info['max_exploding_grad_pct'] = max(exploding_pcts)
-            trial_info['min_exploding_grad_pct'] = min(exploding_pcts)
-            trial_info['num_epochs_analyzed'] = len(exploding_pcts)
-            print(f"  Found {len(exploding_pcts)} gradient stats for trial {trial_id}")
+            if epoch_summaries:
+                exploding_pcts = [s['exploding_grad_pct'] for s in epoch_summaries]
+                
+                trial_info['avg_exploding_grad_pct'] = sum(exploding_pcts) / len(exploding_pcts)
+                trial_info['max_exploding_grad_pct'] = max(exploding_pcts)
+                trial_info['min_exploding_grad_pct'] = min(exploding_pcts)
+                trial_info['num_epochs_analyzed'] = len(epoch_summaries)
+                
+                print(f"  Extracted {len(epoch_summaries)} epochs with gradient stats")
+                print(f"     Avg exploding: {trial_info['avg_exploding_grad_pct']:.2f}%")
+            else:
+                trial_info['avg_exploding_grad_pct'] = None
+                trial_info['max_exploding_grad_pct'] = None
+                trial_info['min_exploding_grad_pct'] = None
+                trial_info['num_epochs_analyzed'] = 0
+                print(f"  Could not extract gradient stats from logs")
         else:
             trial_info['avg_exploding_grad_pct'] = None
             trial_info['max_exploding_grad_pct'] = None
             trial_info['min_exploding_grad_pct'] = None
             trial_info['num_epochs_analyzed'] = 0
-            print(f"  No gradient stats found for trial {trial_id}")
+            print(f"  No logs found for trial {trial_id}")
     
     return trial_data
 
@@ -165,55 +224,41 @@ def extract_from_custom_job(job_name, project_id, region):
     
     job_id = job_name.split('/')[-1]
     
-    # Query logs for this job - BROADER SEARCH
+    # Query logs for this job
     filter_str = f'''
 resource.type="aiplatform.googleapis.com/CustomJob"
 resource.labels.job_id="{job_id}"
-(jsonPayload.message=~"GRADIENT_STATS" OR 
- jsonPayload.message=~"EXPLODING gradients" OR
- jsonPayload.message=~"ExplodingGrad")
+jsonPayload.message=~"Epoch.*summary|EXPLODING gradients"
 '''
     
     print(f"Fetching logs for job {job_id}...")
     
     logs = run_gcloud_logs(project_id, filter_str, limit=5000)
     
-    epoch_stats = []
-    
-    for entry in logs:
-        message = entry.get('jsonPayload', {}).get('message', '')
-        
-        if not message:
-            message = entry.get('textPayload', '')
-        
-        timestamp = entry.get('timestamp', '')
-        
-        epoch, pct = extract_gradient_from_message(message)
-        
-        if pct is not None:
-            epoch_stats.append({
-                'epoch': epoch if epoch is not None else len(epoch_stats),
-                'exploding_grad_pct': pct,
-                'timestamp': timestamp
-            })
-    
-    if not epoch_stats:
-        print("  No gradient stats found in logs")
-        print("  Make sure your training script logs with [GRADIENT_STATS] tag")
+    if not logs:
+        print("  No logs found")
         return None
     
-    # Sort by epoch
-    epoch_stats.sort(key=lambda x: x['epoch'])
+    print(f"  Retrieved {len(logs)} log entries")
+    
+    # Extract epoch summaries
+    epoch_summaries = extract_epoch_from_logs(logs)
+    
+    if not epoch_summaries:
+        print("  Could not extract gradient stats from logs")
+        return None
+    
+    print(f"  Extracted {len(epoch_summaries)} epochs with gradient stats")
     
     # Compute summary
-    exploding_pcts = [s['exploding_grad_pct'] for s in epoch_stats]
+    exploding_pcts = [s['exploding_grad_pct'] for s in epoch_summaries]
     summary = {
         'job_id': job_id,
-        'num_epochs': len(epoch_stats),
+        'num_epochs': len(epoch_summaries),
         'avg_exploding_grad_pct': sum(exploding_pcts) / len(exploding_pcts),
         'max_exploding_grad_pct': max(exploding_pcts),
         'min_exploding_grad_pct': min(exploding_pcts),
-        'epoch_details': epoch_stats
+        'epoch_details': epoch_summaries
     }
     
     return summary
@@ -229,7 +274,7 @@ def extract_from_recent_jobs(project_id, region, hours=24, job_type='all'):
     # Calculate time filter
     start_time = datetime.utcnow() - timedelta(hours=hours)
     
-    # Query for all jobs with gradient stats - BROADER SEARCH
+    # Query for all jobs with gradient stats
     if job_type == 'hp_tuning':
         resource_filter = 'resource.type="aiplatform.googleapis.com/HyperparameterTuningJob"'
     elif job_type == 'custom':
@@ -240,66 +285,64 @@ def extract_from_recent_jobs(project_id, region, hours=24, job_type='all'):
     filter_str = f'''
 {resource_filter}
 timestamp>="{start_time.isoformat()}Z"
-(jsonPayload.message=~"GRADIENT_STATS" OR 
- jsonPayload.message=~"EXPLODING gradients" OR
- jsonPayload.message=~"ExplodingGrad")
+jsonPayload.message=~"Epoch.*summary|EXPLODING gradients"
 '''
     
     print(f"Searching logs...")
     
     logs = run_gcloud_logs(project_id, filter_str, limit=10000)
     
-    # Group by job_id
-    job_stats = {}
+    if not logs:
+        print("  No logs found")
+        return []
+    
+    # Group logs by job_id
+    jobs_by_id = {}
     
     for entry in logs:
-        message = entry.get('jsonPayload', {}).get('message', '')
-        
-        if not message:
-            message = entry.get('textPayload', '')
-        
-        # Get job ID from labels
         labels = entry.get('labels', {})
         resource_labels = entry.get('resource', {}).get('labels', {})
         
         job_id = labels.get('job_id') or resource_labels.get('job_id', 'unknown')
         trial_id = labels.get('trial_id', None)
         
-        # Create unique key
         key = f"{job_id}"
         if trial_id:
             key = f"{job_id}/trial_{trial_id}"
         
-        if key not in job_stats:
-            job_stats[key] = {
+        if key not in jobs_by_id:
+            jobs_by_id[key] = {
                 'job_id': job_id,
                 'trial_id': trial_id,
-                'exploding_pcts': [],
-                'timestamp': entry.get('timestamp', '')
+                'logs': []
             }
         
-        # Extract gradient percentage
-        epoch, pct = extract_gradient_from_message(message)
-        
-        if pct is not None:
-            job_stats[key]['exploding_pcts'].append(pct)
+        jobs_by_id[key]['logs'].append(entry)
     
-    # Summarize
+    # Extract gradient stats for each job
     summaries = []
-    for key, stats in job_stats.items():
-        if stats['exploding_pcts']:
+    
+    for key, job_data in jobs_by_id.items():
+        print(f"\n  Analyzing {key}...")
+        
+        epoch_summaries = extract_epoch_from_logs(job_data['logs'])
+        
+        if epoch_summaries:
+            exploding_pcts = [s['exploding_grad_pct'] for s in epoch_summaries]
+            
             summaries.append({
-                'job_id': stats['job_id'],
-                'trial_id': stats['trial_id'] or 'N/A',
-                'num_epochs': len(stats['exploding_pcts']),
-                'avg_exploding_grad_pct': sum(stats['exploding_pcts']) / len(stats['exploding_pcts']),
-                'max_exploding_grad_pct': max(stats['exploding_pcts']),
-                'min_exploding_grad_pct': min(stats['exploding_pcts']),
+                'job_id': job_data['job_id'],
+                'trial_id': job_data['trial_id'] or 'N/A',
+                'num_epochs': len(epoch_summaries),
+                'avg_exploding_grad_pct': sum(exploding_pcts) / len(exploding_pcts),
+                'max_exploding_grad_pct': max(exploding_pcts),
+                'min_exploding_grad_pct': min(exploding_pcts),
             })
+            
+            print(f"   Found {len(epoch_summaries)} epochs")
     
     if not summaries:
-        print(" No jobs with gradient stats found")
-        print(" Make sure your training script logs with [GRADIENT_STATS] tag")
+        print("  No jobs with gradient stats found")
         return []
     
     return summaries
@@ -386,12 +429,14 @@ def main():
             print(f"Min exploding gradient %: {summary['min_exploding_grad_pct']:.2f}%")
             
             # Epoch-by-epoch details
-            print(f"\nEpoch-by-Epoch Details:")
-            print("-" * 80)
-            epoch_df = pd.DataFrame(summary['epoch_details'])
-            print(epoch_df.to_string(index=False))
-            
-            results = epoch_df
+            if summary['epoch_details']:
+                print(f"\nEpoch-by-Epoch Details:")
+                print("-" * 80)
+                epoch_df = pd.DataFrame(summary['epoch_details'])
+                print(epoch_df.to_string(index=False))
+                results = epoch_df
+        else:
+            print("\nNo results extracted")
     
     elif args.recent_jobs:
         summaries = extract_from_recent_jobs(
