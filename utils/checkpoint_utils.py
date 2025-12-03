@@ -36,11 +36,11 @@ def save_checkpoint(model: nn.Module,
             # Get trial ID for unique path (set by Vertex AI during HP tuning)
             trial_id = os.environ.get('CLOUD_ML_TRIAL_ID', 'local')
             # Use CHECKPOINT ID if set, otherwise trial ID, or local
-            checkpoint_id = os.environ.get('CHECKPOINT_ID', trial_id)
+            checkpoint_id = os.environ.get('CHECKPOINT_ID')
             
             # Create unique GCS path per trial
             filename = os.path.basename(file_path)
-            gcs_path = f"checkpoints/trial_{checkpoint_id}/{filename}"
+            gcs_path = f"checkpoints/trial_{checkpoint_id}_{trial_id}/{filename}"
 
             client = storage.Client()
             bucket = client.bucket(GCS_BUCKET)
