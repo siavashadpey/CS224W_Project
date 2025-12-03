@@ -187,7 +187,7 @@ class MaskedGeometricAutoencoder(nn.Module):
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight, gain=0.01)  # Small gain
                 if module.bias is not None:
-                    nn.init.zeros_(m.bias)
+                    nn.init.zeros_(module.bias)
                 print("Applied Xavier initialization to linear layer")
             elif isinstance(module, nn.Parameter):
                 module.data.normal_(0, 0.01)

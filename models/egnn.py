@@ -32,11 +32,17 @@ class EGNN(torch.nn.Module):
             edge_dim       : int = 0,
             update_pos     : bool = True,
             act            : Union['str', Callable] = "SiLU",
-            skip_connection: bool = False):
+            skip_connection: bool = False,
+            pos_scale      : float = 0.0):
         super().__init__()
 
         assert skip_connection is False or in_channels == hidden_channels, "Skip connection requires in_channels == hidden_channels"
         act = activation_resolver(act) 
+
+        # Store position scale as a learnable parameter
+        if pos_scale > 0:
+            self.pos_scale = torch.nn.Parameter(torch.tensor(pos_scale))
+
         self.convs = torch.nn.ModuleList()
         nn_edge = torch.nn.Sequential(
             torch.nn.Linear(2 * in_channels + 1 + edge_dim, hidden_channels),
@@ -50,6 +56,7 @@ class EGNN(torch.nn.Module):
         if update_pos:
             layer_pos = torch.nn.Linear(hidden_channels, 1, bias=True)
             torch.nn.init.xavier_uniform_(layer_pos.weight, gain=0.001)
+            torch.nn.init.zeros_(layer_pos.bias)
             nn_pos = torch.nn.Sequential(
                 torch.nn.Linear(hidden_channels, hidden_channels),
                 act,
@@ -70,6 +77,7 @@ class EGNN(torch.nn.Module):
             if update_pos:
                 layer_pos = torch.nn.Linear(hidden_channels, 1, bias=True)
                 torch.nn.init.xavier_uniform_(layer_pos.weight, gain=0.001)
+                torch.nn.init.zeros_(layer_pos.bias)
                 nn_pos = torch.nn.Sequential(
                     torch.nn.Linear(hidden_channels, hidden_channels),
                     act,
@@ -77,6 +85,7 @@ class EGNN(torch.nn.Module):
             else:
                 nn_pos = None
             self.convs.append(EGNNConv(nn_edge, nn_node, pos_dim, nn_pos, skip_connection))
+    
     def forward(self,
                 x: Tensor,
                 pos: Tensor,
@@ -84,7 +93,17 @@ class EGNN(torch.nn.Module):
                 edge_attr: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
 
         for conv in self.convs:
-            x, pos = conv(x, pos, edge_index, edge_attr)
+            x, pos_new = conv(x, pos, edge_index, edge_attr)
 
+        # scale position updates
+        if self.pos_scale:
+            pos_update = pos_new - pos
+            pos_update = pos_update * torch.sigmoid(self.pod_scale)
+            pos_update = torch.clamp(pos_update, min=-1.0, max=1.0)
+            pos = pos + pos_update
+
+            # clamp final positions
+            pos = torch.clamp(pos, min=-200.0, max=200)
+            
         return (x, pos)
         

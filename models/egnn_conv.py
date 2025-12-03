@@ -70,8 +70,7 @@ class EGNNConv(MessagePassing):
             assert edge_attr.size(0) == edge_index.size(1), "edge_attr must match number of edges"
         assert self.skip_connection is False or x.size(-1) == self.nn_node[-1].out_features, "For skip connection, input and output node feature dimensions must match"
 
-        #TODO: compute weighted message
-            # Check for NaN in inputs
+        # Check for NaN in inputs
         if torch.isnan(x).any() or torch.isinf(x).any():
             print("NaN/Inf in x input to EGNNConv")
             x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
@@ -104,7 +103,7 @@ class EGNNConv(MessagePassing):
         
         # Clamp before passing through neural network
         if self.clamp:
-            node_input = torch.clamp(node_input, min=-10.0, max=10.0)
+            node_input = torch.clamp(node_input, min=-self.clamp_magnitude, max=self.clamp_magnitude)
         
         out_node = self.nn_node(node_input)
         
@@ -119,7 +118,7 @@ class EGNNConv(MessagePassing):
 
          # Final clamp
         if self.clamp:
-            out_node = torch.clamp(out_node, min=-10.0, max=10.0)
+            out_node = torch.clamp(out_node, min=-self.clamp_magnitude, max=self.clamp_magnitude)
             out_pos = torch.clamp(out_pos, min=-100.0, max=100.0)
 
         return (out_node, out_pos)
@@ -137,20 +136,20 @@ class EGNNConv(MessagePassing):
         if self.clamp:
             # Clamp square_norm to prevent extreme values
             square_norm = torch.clamp(square_norm, min=self.eps, max=1000.0)
-        
-            # Normalize square_norm for better numerical stability
-            # Use log scale for very large distances
-            square_norm = torch.log(square_norm + 1.0)
+            dist = torch.sqrt(square_norm + self.eps) # use sqrt for more stable gradients
+        # Normalize square_norm for better numerical stability
+        else:
+            dist = torch.log(square_norm + 1.0) # use log scale for large distances
 
         if edge_attr is not None:
             if self.clamp:
-                edge_attr = torch.clamp(edge_attr, min=-10.0, max=10.0)
-            out = torch.cat([x_j, x_i, square_norm, edge_attr], dim=-1)
+                edge_attr = torch.clamp(edge_attr, min=-self.clamp_magnitude, max=self.clamp_magnitude)
+            out = torch.cat([x_j, x_i, dist, edge_attr], dim=-1)
         else:
-            out = torch.cat([x_j, x_i, square_norm], dim=-1)
+            out = torch.cat([x_j, x_i, dist], dim=-1)
 
         if self.clamp:
-            out = torch.clamp(out, min=-10.0, max=10.0)
+            out = torch.clamp(out, min=-self.clamp_magnitude, max=self.clamp_magnitude)
 
         out = self.nn_edge(out)
 
@@ -168,12 +167,11 @@ class EGNNConv(MessagePassing):
                 out_pos_j = torch.nan_to_num(out_pos_j, nan=0.0, posinf=0.1, neginf=-0.1)
             
             # Normalize position difference with better stability
-            dist = torch.sqrt(square_norm + self.eps)
             pos_diff_normalized = pos_diff / (dist + self.eps)
 
             if self.clamp:
                 pos_diff_normalized = torch.clamp(pos_diff_normalized, min=-1.0, max=1.0)
-                out_pos_j = torch.clamp(out_pos_j, min=-1.0, max=1.0)
+                out_pos_j = torch.clamp(out_pos_j, min=-0.5, max=0.5)
  
             message_pos_j = pos_diff_normalized * out_pos_j
             out = torch.cat([out, message_pos_j], dim=-1)
@@ -192,7 +190,10 @@ class EGNNConv(MessagePassing):
         else:
             message_node = inputs
         
-        out = torch_scatter.scatter_add(message_node, index, dim=0, dim_size=dim_size)
+        if self.clamp:
+             out = torch_scatter.scatter_mean(message_node, index, dim=0, dim_size=dim_size)
+        else: 
+            out = torch_scatter.scatter_add(message_node, index, dim=0, dim_size=dim_size)
 
         if out_pos is not None:
             out = torch.cat([out, out_pos], dim=-1)
