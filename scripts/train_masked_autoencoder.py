@@ -152,6 +152,8 @@ def train_one_epoch(data_loader,
     logger.info(f"   EXPLODING gradients: {exploding_count} ({exploding_pct:.2f}%)")
     logger.info(f"   Avg loss: {avg_loss:.4f}")
 
+    logger.info(f"[GRADIENT_STATS] epoch={epoch}, exploding_grad_pct={exploding_pct:.2f}%")
+
     return avg_loss, exploding_pct
 
 def eval(data_loader,
