@@ -40,7 +40,11 @@ class EGNN(torch.nn.Module):
         act = activation_resolver(act) 
 
         # Store position scale as a learnable parameter
-        self.pos_scale_logit = torch.nn.Parameter(torch.logit(torch.tensor(pos_scale))) if pos_scale > 0 else None
+        if pos_scale > 0:
+            logit_value = math.log(pos_scale / (1.0 - pos_scale))
+            self.pos_scale_logit = torch.nn.Parameter(torch.tensor(logit_value)) 
+        else:
+            self.pos_scale_logit = None
 
         self.convs = torch.nn.ModuleList()
 
