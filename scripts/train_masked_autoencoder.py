@@ -260,7 +260,8 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate for the optimizer.')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
-    
+    parser.add_argument('--pos_scale', type=float, default=0.0, help='Scale the position update')
+
     # Model architecture
     parser.add_argument('--num_encoder_layers', type=int, default=3, help='Number of encoder layers in the model.')
     parser.add_argument('--num_decoder_layers', type=int, default=3, help='Number of decoder layers in the model.')
@@ -272,8 +273,6 @@ def main():
 
     args = parser.parse_args()
 
-    logger.info(args)
-
     # --- Initialize Logging ---
     # setup logging for Vertex AI
     logging.basicConfig(
@@ -282,6 +281,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     # --------------------------
+    logger.info(args)
 
     os.makedirs(args.model_save_path, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -307,14 +307,16 @@ def main():
              num_layers=args.num_encoder_layers,
              pos_dim=3,
              edge_dim=train_dataset.edge_features_dim,
-             skip_connection=True)
+             skip_connection=True, 
+             pos_scale=args.pos_scale)
     decoder = Decoder(
              in_channels=args.hidden_dim,
              hidden_channels=args.hidden_dim,
              num_layers=args.num_decoder_layers,
              pos_dim=3,
              edge_dim=train_dataset.edge_features_dim,
-             skip_connection=True)
+             skip_connection=True, 
+             pos_scale=args.pos_scale)
     model = MaskedGeometricAutoencoder(
              encoder=encoder, 
              decoder=decoder,
@@ -335,6 +337,7 @@ def main():
         logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
         logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, test loss: {checkpoint["test_loss"]}')
 
+    logger.info("Checking weight initialization...")
     for name, param in model.named_parameters():
         if torch.isnan(param).any() or torch.isinf(param).any():
             logger.warning(f"NaN/Inf in parameter: {name}")

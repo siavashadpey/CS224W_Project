@@ -18,7 +18,8 @@ class Encoder(nn.Module):
                  edge_dim: int, 
                  pos_dim: int,
                  act: Union['str', Callable] = "SiLU",
-                 skip_connection: bool = False):
+                 skip_connection: bool = False,
+                 pos_scale: float = 0.0):
         """
          Encoder using EGNN layers.
          Args:
@@ -45,7 +46,8 @@ class Encoder(nn.Module):
                 edge_dim=edge_dim,
                 update_pos=update_pos,
                 act=act,
-                skip_connection=False)
+                skip_connection=False,
+                pos_scale=pos_scale)
             self.GNN1 = EGNN(
                 in_channels=hidden_channels,
                 hidden_channels=hidden_channels,
@@ -54,7 +56,8 @@ class Encoder(nn.Module):
                 edge_dim=edge_dim,
                 update_pos=update_pos,
                 act=act,
-                skip_connection=True)
+                skip_connection=True,
+                pos_scale=pos_scale)
         else:
             # single EGNN module
             self.EGNN_all = EGNN(
@@ -65,7 +68,8 @@ class Encoder(nn.Module):
                 edge_dim=edge_dim,
                 update_pos=update_pos,
                 act=act,
-                skip_connection=False)
+                skip_connection=False,
+                pos_scale=pos_scale)
             
     def forward(self,
                 x  : torch.Tensor,
@@ -104,7 +108,8 @@ class Decoder(nn.Module):
                  edge_dim: int,
                  pos_dim: int,
                  act: Union['str', Callable] = "SiLU",
-                 skip_connection: bool = False):
+                 skip_connection: bool = False,
+                 pos_scale: float = 0.0):
         super(Decoder, self).__init__()
         self.in_channels = in_channels
         self.hidden_channels = hidden_channels
@@ -119,7 +124,8 @@ class Decoder(nn.Module):
                 edge_dim=edge_dim,
                 update_pos=True,
                 act=act,
-                skip_connection=False)
+                skip_connection=False,
+                pos_scale=pos_scale)
             self.EGNN1 = EGNN(
                 in_channels=hidden_channels,
                 hidden_channels=hidden_channels,
@@ -128,7 +134,8 @@ class Decoder(nn.Module):
                 edge_dim=edge_dim,
                 update_pos=True,
                 act=act,
-                skip_connection=True)
+                skip_connection=True,
+                pos_scale=pos_scale)
         else:
             self.EGNN_all = EGNN(
                 in_channels=in_channels,
@@ -138,7 +145,8 @@ class Decoder(nn.Module):
                 edge_dim=edge_dim,
                 update_pos=True,
                 act=act,
-                skip_connection=skip_connection)
+                skip_connection=skip_connection,
+                pos_scale=pos_scale)
 
     def forward(self,
                 x  : torch.Tensor,

@@ -47,8 +47,14 @@ class EGNNConv(MessagePassing):
         self.skip_connection = skip_connection
         self.pos_dim = pos_dim
         self.eps = 1e-8  # Epsilon for numerical stability
+        
         self.clamp = False
-        self.clamp_magnitude = 10.0
+        self.node_clamp = 50.0  # for node features 
+        self.pos_clamp = 500.0  # for final position 
+        self.pos_update_clamp = 3.0  # for aggregated position update
+        self.edge_clamp = 50.0   # for features in message
+        self.pos_influence_clamp = 2.0 # for individual edge position influence
+
         self.reset_parameters()
     
     def reset_parameters(self):
@@ -64,6 +70,15 @@ class EGNNConv(MessagePassing):
                 edge_index : Adj, 
                 edge_attr  : Optional[Tensor] = None,
                 size       : Size = None) -> Tuple[Tensor, Tensor]:
+
+        node_max = x.abs().max().item()
+        pos_max = pos.abs().max().item()
+
+        if node_max * 1.25 > self.node_clamp # close to clamp
+            print(f"WARNING: Node features approaching clamp: max={node_max:.2f}")
+
+        if pos_max * 1.25 > self.pos_clamp # close to clamp
+            print(f"WARNING: Positions approaching clamp: max={pos_max:.2f}")
 
         assert x.size(0) == pos.size(0), "x and pos must have same number of nodes"
         if edge_attr is not None:
@@ -92,7 +107,7 @@ class EGNNConv(MessagePassing):
                 
             # Clamp position updates to prevent explosion
             if self.clamp:
-                message_pos = torch.clamp(message_pos, min=-1.0, max=1.0)
+                message_pos = torch.clamp(message_pos, min=-self.pos_update_clamp, max=self.pos_update_clamp)
             
             out_pos = pos + message_pos
         else:
@@ -103,7 +118,7 @@ class EGNNConv(MessagePassing):
         
         # Clamp before passing through neural network
         if self.clamp:
-            node_input = torch.clamp(node_input, min=-self.clamp_magnitude, max=self.clamp_magnitude)
+            node_input = torch.clamp(node_input, min=-self.node_clamp, max=self.node_clamp)
         
         out_node = self.nn_node(node_input)
         
@@ -118,8 +133,8 @@ class EGNNConv(MessagePassing):
 
          # Final clamp
         if self.clamp:
-            out_node = torch.clamp(out_node, min=-self.clamp_magnitude, max=self.clamp_magnitude)
-            out_pos = torch.clamp(out_pos, min=-100.0, max=100.0)
+            out_node = torch.clamp(out_node, min=-self.node_clamp, max=self.node_clamp)
+            out_pos = torch.clamp(out_pos, min=-self.pos_clamp, max=self.pos_clamp)
 
         return (out_node, out_pos)
 
@@ -135,7 +150,7 @@ class EGNNConv(MessagePassing):
         
         if self.clamp:
             # Clamp square_norm to prevent extreme values
-            square_norm = torch.clamp(square_norm, min=self.eps, max=1000.0)
+            square_norm = torch.clamp(square_norm, min=self.eps, max=10000.0)
             dist = torch.sqrt(square_norm + self.eps) # use sqrt for more stable gradients
         # Normalize square_norm for better numerical stability
         else:
@@ -143,13 +158,13 @@ class EGNNConv(MessagePassing):
 
         if edge_attr is not None:
             if self.clamp:
-                edge_attr = torch.clamp(edge_attr, min=-self.clamp_magnitude, max=self.clamp_magnitude)
+                edge_attr = torch.clamp(edge_attr, min=-self.edge_clamp, max=self.edge_clamp)
             out = torch.cat([x_j, x_i, dist, edge_attr], dim=-1)
         else:
             out = torch.cat([x_j, x_i, dist], dim=-1)
 
         if self.clamp:
-            out = torch.clamp(out, min=-self.clamp_magnitude, max=self.clamp_magnitude)
+            out = torch.clamp(out, min=-self.edge_clamp, max=self.edge_clamp)
 
         out = self.nn_edge(out)
 
@@ -171,7 +186,7 @@ class EGNNConv(MessagePassing):
 
             if self.clamp:
                 pos_diff_normalized = torch.clamp(pos_diff_normalized, min=-1.0, max=1.0)
-                out_pos_j = torch.clamp(out_pos_j, min=-0.5, max=0.5)
+                out_pos_j = torch.clamp(out_pos_j, min=-self.pos_influence_clamp, max=self.pos_influence_clamp)
  
             message_pos_j = pos_diff_normalized * out_pos_j
             out = torch.cat([out, message_pos_j], dim=-1)

@@ -13,6 +13,7 @@ export TEST_PREFIX="${TEST_PREFIX:-data_w_pos/plgems_full_casf2016.pt}"
 export NUM_EPOCHS="${NUM_EPOCHS:-10}"
 export BATCH_SIZE="${BATCH_SIZE:-16}"
 export MASKING_RATIO="${MASKING_RATIO:-0.4}"
+export POS_SCALE="${POS_SCALE:-0.0}"
 export LEARNING_RATE="${LEARNING_RATE:-0.0001}"
 export HIDDEN_DIM="${HIDDEN_DIM:-256}"
 export CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-5}"
@@ -26,6 +27,7 @@ echo "GCS Bucket: ${GCS_BUCKET}"
 echo "Epochs: ${NUM_EPOCHS}"
 echo "Batch Size: ${BATCH_SIZE}"
 echo "Masking Ratio: ${MASKING_RATIO}"
+echo "Pos Scale: ${POS_SCALE}"
 echo "Hidden Dim: ${HIDDEN_DIM}"
 echo "Learning Rate: ${LEARNING_RATE}"
 echo ""
@@ -54,6 +56,7 @@ docker run --rm \
     --num_epochs "${NUM_EPOCHS}" \
     --batch_size "${BATCH_SIZE}" \
     --masking_ratio "${MASKING_RATIO}" \
+    --pos_scale "${POS_SCALE}" \
     --learning_rate "${LEARNING_RATE}" \
     --hidden_dim "${HIDDEN_DIM}" \
     --checkpoint_interval "${CHECKPOINT_INTERVAL}" \

@@ -40,10 +40,10 @@ class EGNN(torch.nn.Module):
         act = activation_resolver(act) 
 
         # Store position scale as a learnable parameter
-        if pos_scale > 0:
-            self.pos_scale = torch.nn.Parameter(torch.tensor(pos_scale))
+        self.pos_scale_logit = torch.nn.Parameter(torch.logit(torch.tensor(pos_scale))) if pos_scale > 0 else None
 
         self.convs = torch.nn.ModuleList()
+
         nn_edge = torch.nn.Sequential(
             torch.nn.Linear(2 * in_channels + 1 + edge_dim, hidden_channels),
             act,
@@ -92,18 +92,23 @@ class EGNN(torch.nn.Module):
                 edge_index: Adj,
                 edge_attr: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
 
+        pos_clamp = 500.0  # for final position 
+        pos_update_clamp = 5.0  # for aggregated position update
+
         for conv in self.convs:
             x, pos_new = conv(x, pos, edge_index, edge_attr)
 
         # scale position updates
-        if self.pos_scale:
+        if self.pos_scale_logit is not None:
             pos_update = pos_new - pos
-            pos_update = pos_update * torch.sigmoid(self.pod_scale)
-            pos_update = torch.clamp(pos_update, min=-1.0, max=1.0)
+            pos_update = pos_update * torch.sigmoid(self.pos_scale_logit)
+
+            # softer clamping - allow larger updates
+            pos_update = torch.clamp(pos_update, min=-pos_update_clamp, max=pos_update_clamp)
             pos = pos + pos_update
 
             # clamp final positions
-            pos = torch.clamp(pos, min=-200.0, max=200)
+            pos = torch.clamp(pos, min=-pos_clamp, max=pos_clamp)
             
         return (x, pos)
         

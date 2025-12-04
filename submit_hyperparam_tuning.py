@@ -69,7 +69,7 @@ def submit_hp_job(args):
     parameter_spec = {
         'learning_rate': hpt.DoubleParameterSpec(
             min=0.00001,
-            max=0.0001,
+            max=0.001,
             scale='log'
         ),
         'hidden_dim': hpt.DiscreteParameterSpec(
@@ -84,9 +84,14 @@ def submit_hp_job(args):
             values=[3, 4, 5],
             scale='linear'
         ),
+        'pos_scale': hpt.DoubleParameterSpec(
+            min=0.3,
+            max=0.9,
+            scale='linear'
+        ),
         'masking_ratio': hpt.DoubleParameterSpec(
-            min=0.005,
-            max=0.6,
+            min=0.25,
+            max=0.8,
             scale='linear'
         ),
         'batch_size': hpt.DiscreteParameterSpec(
