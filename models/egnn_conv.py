@@ -48,7 +48,7 @@ class EGNNConv(MessagePassing):
         self.pos_dim = pos_dim
         self.eps = 1e-8  # Epsilon for numerical stability
         
-        self.clamp = False
+        self.clamp = True
         self.node_clamp = 50.0  # for node features 
         self.pos_clamp = 500.0  # for final position 
         self.pos_update_clamp = 3.0  # for aggregated position update
