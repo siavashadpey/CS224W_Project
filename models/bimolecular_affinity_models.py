@@ -183,25 +183,18 @@ class MaskedGeometricAutoencoder(nn.Module):
         # Ensure masked token dimension matches encoder output dimension (hidden channels)
         # Initialize to smaller values to help stabilize training
         self.masked_node_token = nn.Parameter(torch.randn(1, self.encoder.hidden_channels) * 0.01)
-        nn.init.xavier_uniform_(self.masked_node_token)
 
         # *** ADD: Apply careful initialization to all layers ***
-        self.apply_weight_initialization()
+        #self.apply(self._init_weights)
     
-    def apply_weight_initialization(self):
-        
-        def init_weights(module):
-            """Initialize weights with smaller values"""
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight, gain=0.01)  # Small gain
-                if module.bias is not None:
-                    nn.init.zeros_(module.bias)
-                print("Applied Xavier initialization to linear layer")
-            elif isinstance(module, nn.Parameter):
-                module.data.normal_(0, 0.01)
-
-        self.encoder.apply(init_weights)
-        self.decoder.apply(init_weights)
+    def _init_weights(self, module):
+        """Initialize weights with smaller values"""
+        if isinstance(module, nn.Linear):
+            torch.nn.init.xavier_uniform_(module.weight, gain=0.01)  # Small gain
+            if module.bias is not None:
+                module.bias.data.fill_(0.01)
+        elif isinstance(module, nn.Parameter):
+            module.data.normal_(0, 0.01)
     
     def forward(self,
                 x  : Tensor,
@@ -218,9 +211,12 @@ class MaskedGeometricAutoencoder(nn.Module):
             
         # Randomly mask nodes and their edges.
         num_nodes = x.size(0)
-        num_masked = max(1, int(self.masking_ratio * num_nodes))
-        num_masked = min(num_masked, num_nodes-1)
+        num_masked = int(self.masking_ratio * num_nodes)
         num_visible = num_nodes - num_masked
+
+        # ensure masking is valid
+        if num_visible < 1: 
+            raise ValueError("Masking ratio is too high, resulting in zero or negative visible nodes")
         
         node_indices_perm = torch.randperm(num_nodes, device=x.device)
         mask_indices, vis_indices = node_indices_perm[:num_masked], node_indices_perm[num_masked:]
