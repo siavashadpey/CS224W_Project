@@ -71,14 +71,14 @@ class EGNNConv(MessagePassing):
                 edge_attr  : Optional[Tensor] = None,
                 size       : Size = None) -> Tuple[Tensor, Tensor]:
 
-        # node_max = x.abs().max().item()
-        # pos_max = pos.abs().max().item()
+        node_max = x.abs().max().item()
+        pos_max = pos.abs().max().item()
 
-        # if node_max * 1.25 > self.node_clamp: # close to clamp
-        #     print(f"WARNING: Node features approaching clamp: max={node_max:.2f}")
+        if node_max * 1.25 > self.node_clamp # close to clamp
+            print(f"WARNING: Node features approaching clamp: max={node_max:.2f}")
 
-        # if pos_max * 1.25 > self.pos_clamp: # close to clamp
-        #     print(f"WARNING: Positions approaching clamp: max={pos_max:.2f}")
+        if pos_max * 1.25 > self.pos_clamp # close to clamp
+            print(f"WARNING: Positions approaching clamp: max={pos_max:.2f}")
 
         assert x.size(0) == pos.size(0), "x and pos must have same number of nodes"
         if edge_attr is not None:
