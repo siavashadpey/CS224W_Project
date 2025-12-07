@@ -408,3 +408,71 @@ class EGNNRegressionHead(RegressionHeadBase):
         
         return x
         
+class EGNNMLPRegressionHead(RegressionHeadBase):
+    """
+    EGNN regression head for binding affinity prediction.
+    order: EGNN layers -> Global pooling -> MLP layers -> Linear layer.
+    Args:
+        encoder (nn.Module): Encoder model to extract node features.
+        hidden_channels (int): Hidden dimension for EGNN layers.
+        num_layers (int): Number of EGNN layers.
+        edge_dim (int): Dimension of edge features.
+        act (Union['str', Callable]): Activation function to use. (default: "SiLU")
+        skip_connection (bool): Whether to use skip connections. (default: False)
+        global_pool (Union['str', Callable]): Global pooling method to use. (default: "global_mean_pool")
+    """
+    def __init__(self,
+             encoder: nn.Module,
+             gnn_hidden_channels: int,
+             gnn_num_layers: int, 
+             edge_dim: int,
+             mlp_hidden_channels: int,
+             mlp_num_layers: int,
+             gnn_act: Union['str', Callable] = "SiLU",
+             skip_connection: bool = False, 
+             global_pool: Union['str', Callable] = "global_mean_pool", 
+             mlp_act: Union['str', Callable] = "ReLU"):
+        super(EGNNMLPRegressionHead, self).__init__(encoder)
+    
+        assert(not skip_connection or gnn_hidden_channels == self.in_channels), "Hidden channels must match encoder output dimension"
+        self.gnn_hidden_channels = gnn_hidden_channels
+        self.egnn = EGNN(
+            in_channels=self.in_channels,
+            hidden_channels=self.gnn_hidden_channels,
+            num_layers=gnn_num_layers,
+            pos_dim=3,
+            edge_dim=edge_dim,
+            update_pos=False,
+            act=gnn_act,
+            skip_connection=skip_connection)
+        if isinstance(global_pool, str):
+            self.global_pool = getattr(pyg_nn, global_pool)
+        else:
+            self.global_pool = global_pool
+        layers = [nn.Linear(self.gnn_hidden_channels, mlp_hidden_channels),
+                  getattr(nn, mlp_act)()]
+        for _ in range(mlp_num_layers - 1):
+            layers.append(nn.Linear(mlp_hidden_channels, mlp_hidden_channels))
+            if isinstance(mlp_act, str):
+                layers.append(getattr(nn, mlp_act)())
+            else:
+                layers.append(mlp_act)
+        self.mlp = nn.Sequential(*layers)
+
+        self.linear = nn.Linear(mlp_hidden_channels, 1)
+
+    def forward(self, 
+                x: Tensor,
+                pos: Tensor,
+                edge_index: Adj,
+                edge_attr: Tensor,
+                batch_indices: Tensor) -> Tensor:
+        
+        x, _ = self.encoder(x, pos, edge_index, edge_attr)
+        x, _ = self.egnn(x, pos, edge_index, edge_attr)
+        x = self.global_pool(x, batch_indices)
+        x = self.mlp(x)
+        x = self.linear(x)
+        
+        return x
+        
