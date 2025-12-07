@@ -10,6 +10,8 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from torch import nn, torch
+from torch.optim.lr_scheduler import ExponentialLR
+
 from torch_geometric import seed_everything
 from torch_geometric.data import Data as PyGData
 
@@ -32,7 +34,8 @@ TODO:
 
 def train_one_epoch(data_loader, 
                     model: nn.Module, 
-                    optimizer: torch.optim.Optimizer, 
+                    optimizer: torch.optim.Optimizer,
+                    lr_scheduler: torch.optim.lr_scheduler._LRScheduler, 
                     loss_fn: Callable,
                     device: torch.device,
                     epoch: int):
@@ -125,6 +128,7 @@ def train_one_epoch(data_loader,
                 continue
 
             optimizer.step()
+            lr_scheduler.step()
             total_loss += loss_value
             valid_batch_count += 1
 
@@ -257,7 +261,8 @@ def main():
     
     # Training hyperparameters
     parser.add_argument('--num_epochs', type=int, default=150, help='Number of training epochs.')
-    parser.add_argument('--learning_rate', type=float, default=0.0001, help='Learning rate for the optimizer.')
+    parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for the optimizer.')
+    parser.add_argument('--learning_rate_gamma', type=float, default=0.999, help='Learning rate decay factor.')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers.')
     parser.add_argument('--pos_scale', type=float, default=0.0, help='Scale the position update')
@@ -301,7 +306,7 @@ def main():
     )
 
     # Model
-    encoder = Encoder(
+    encoder = Encoder( 
              in_channels=train_dataset.node_features, 
              hidden_channels=args.hidden_dim, 
              num_layers=args.num_encoder_layers,
@@ -323,19 +328,26 @@ def main():
              masking_ratio=args.masking_ratio)
     
     num_params = sum(p.numel() for p in model.parameters())
-    print(f"Number of parameters in model: {num_params}")
+    logger.info(f"Number of parameters in model: {num_params}")
 
     for m in [encoder, decoder, model]:
         m.to(device)
     
     optim = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    lr_scheduler = ExponentialLR(optim, gamma=args.learning_rate_gamma)
     epoch_initial = 0
 
     # load model and optim checkpoints if specified
     if args.load_model_path:
-        epoch_initial, checkpoint = load_checkpoint(model, optim, args.load_model_path)
+        epoch_initial, checkpoint = load_checkpoint(model, optim, lr_scheduler, args.load_model_path)
         logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
-        logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, test loss: {checkpoint["test_loss"]}')
+        logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, {checkpoint["val_loss"]}, test loss: {checkpoint["test_loss"]}')
+
+    logger.info("Checking weight initialization...")
+    for name, param in model.named_parameters():
+        if torch.isnan(param).any() or torch.isinf(param).any():
+            logger.warning(f"NaN/Inf in parameter: {name}")
+            logger.warning(f"   Shape: {param.shape}, values: {param.flatten()[:10]}")
 
     logger.info("Checking weight initialization...")
     for name, param in model.named_parameters():
@@ -352,6 +364,7 @@ def main():
         train_loss, exploding_grad_pct = train_one_epoch(train_loader,
                                      model,
                                      optim,
+                                     lr_scheduler,
                                      l2_loss,
                                      device,
                                      epoch)
@@ -386,6 +399,7 @@ def main():
 
             save_checkpoint(model,
                             optim,
+                            lr_scheduler,
                             epoch,
                             train_loss,
                             val_loss,

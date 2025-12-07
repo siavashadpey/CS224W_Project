@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 def save_checkpoint(model: nn.Module, 
                     optimizer: torch.optim.Optimizer, 
+                    lr_scheduler: torch.optim.lr_scheduler._LRScheduler,
                     epoch: int, 
                     train_loss: float,
                     val_loss: float,
@@ -20,6 +21,7 @@ def save_checkpoint(model: nn.Module,
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
+        'lr_scheduler_state_dict': lr_scheduler.state_dict(),
         'train_loss': train_loss,
         'val_loss': val_loss,
         'test_loss': test_loss
@@ -57,10 +59,12 @@ def save_checkpoint(model: nn.Module,
 
 def load_checkpoint(model: nn.Module,
                     optimizer: torch.optim.Optimizer, 
+                    lr_scheduler: torch.optim.lr_scheduler._LRScheduler,
                     filepath: str) -> Tuple[int, dict]:
     """Load model checkpoint"""
     checkpoint = torch.load(filepath)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
     epoch = checkpoint['epoch']
     return epoch, checkpoint
