@@ -38,7 +38,7 @@ def submit_hp_job(args):
     region = args.region
     gcs_bucket = args.gcs_bucket
     image_uri = f"gcr.io/{project_id}/cs224w-training:latest"
-    job_name = f"cs224w-hptuning-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    job_name = f"cs224w-hptuning-pos-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     
     print("=" * 60)
     print("Hyperparameter Tuning Job Submission")
@@ -104,8 +104,8 @@ def submit_hp_job(args):
     # OPTIMIZATION METRIC
     # ============================================
     metric_spec = {
-#        'val_loss': 'minimize',
-        'exploding_grad_pct': 'minimize'  # secondary metric for analysis
+        'val_loss': 'minimize',
+#        'exploding_grad_pct': 'minimize'  # secondary metric for analysis
     }
     
     # ============================================

@@ -40,7 +40,9 @@ class EGNN(torch.nn.Module):
         act = activation_resolver(act) 
 
         # Store position scale as a learnable parameter
-        self.pos_scale_logit = torch.nn.Parameter(torch.logit(torch.tensor(pos_scale))) if pos_scale > 0 else None
+        self.use_pos_scale = True if pos_scale > 0.0 else False
+        init_param = torch.logit(torch.tensor(pos_scale))
+        self.pos_scale_param = torch.nn.Parameter(init_param)
 
         self.convs = torch.nn.ModuleList()
 
@@ -99,9 +101,9 @@ class EGNN(torch.nn.Module):
             x, pos_new = conv(x, pos, edge_index, edge_attr)
 
         # scale position updates
-        if self.pos_scale_logit is not None:
+        if self.use_pos_scale:
             pos_update = pos_new - pos
-            pos_update = pos_update * torch.sigmoid(self.pos_scale_logit)
+            pos_update = pos_update * torch.sigmoid(self.pos_scale_param)
 
             # softer clamping - allow larger updates
             pos_update = torch.clamp(pos_update, min=-pos_update_clamp, max=pos_update_clamp)

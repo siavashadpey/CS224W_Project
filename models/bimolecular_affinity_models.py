@@ -247,8 +247,8 @@ class MaskedGeometricAutoencoder(nn.Module):
         pos_m = torch.randn((num_masked, pos.size(1)), device=pos.device)
 
         # Combine visible and masked nodes
-        z = torch.empty((num_nodes, x_v.size(1)), device=x.device)
-        pos_combined = torch.empty((num_nodes, pos.size(1)), device=pos.device)
+        z = torch.empty((num_nodes, x_v.size(1)), device=x.device, dtype=x.dtype)
+        pos_combined = torch.empty((num_nodes, pos.size(1)), device=pos.device, dtype=pos.dtype)
         
         z[vis_indices,:] = x_v
         z[mask_indices,:] = z_m
