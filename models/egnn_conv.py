@@ -12,6 +12,8 @@ from torch_geometric.typing import (
 
 import torch_scatter
 
+eps = 1e-8
+
 class EGNNConv(MessagePassing):
     """
     Equivariant Graph Neural Network Layer.
@@ -66,10 +68,8 @@ class EGNNConv(MessagePassing):
         if edge_attr is not None:
             assert edge_attr.size(0) == edge_index.size(1), "edge_attr must match number of edges"
         assert self.skip_connection is False or x.size(-1) == self.nn_node[-1].out_features, "For skip connection, input and output node feature dimensions must match"
-
-        #TODO: compute weighted message
     
-        # Perform message passing
+        # Perform message passing.
         message = self.propagate(edge_index, x=(x, x), pos=(pos, pos), edge_attr=edge_attr, size=size)
         if self.nn_pos is not None:
             (message_node, message_pos) = torch.split(message, [message.size(-1) - self.pos_dim, self.pos_dim], dim=-1)
@@ -78,6 +78,7 @@ class EGNNConv(MessagePassing):
             message_node = message
             out_pos = pos
         
+        # Update node features.
         out_node = self.nn_node(torch.cat([x, message_node], dim=-1))
         if self.skip_connection:
             out_node = out_node + x
@@ -101,7 +102,7 @@ class EGNNConv(MessagePassing):
 
         if self.nn_pos is not None:
             out_pos_j = self.nn_pos(out)
-            pos_diff = pos_diff/(torch.sqrt(square_norm + 1e-8) + 1e-8)
+            pos_diff = pos_diff/(torch.sqrt(square_norm + eps) + eps)
             message_pos_j = pos_diff * out_pos_j
             out = torch.cat([out, message_pos_j], dim=-1)
  
@@ -123,7 +124,6 @@ class EGNNConv(MessagePassing):
 
         if out_pos is not None:
             out = torch.cat([out, out_pos], dim=-1)
-
         return out
 
     def __repr__(self) -> str:

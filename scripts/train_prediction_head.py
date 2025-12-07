@@ -3,33 +3,54 @@ import os
 import logging
 from typing import Callable, List
 import sys
-from pathlib import Path
-
-# Add project root to sys.path so modules like 'models' and 'utils' can be found
-project_root = Path(__file__).resolve().parent.parent
-sys.path.append(str(project_root))
+import sys 
+import math
 
 from torch import nn, torch
 from torch_geometric import seed_everything
 from torch_geometric.loader import DataLoader
+from models.bimolecular_affinity_models import Encoder, LinearRegressionHead, MLPRegressionHead, EGNNRegressionHead, EGNNMLPRegressionHead
+from utils.checkpoint_utils import save_checkpoint, load_checkpoint, download_blob, save_csv_file
+from utils.gcs_dataset_loader import GCSPyGDataset
+from utils.eval import pearson_correlation_coefficient, scaled_pK_rmse
 
 seed_everything(1313)
 
-from models.bimolecular_affinity_models import Encoder, LinearRegressionHead, MLPRegressionHead, EGNNRegressionHead, EGNNMLPRegressionHead
-from utils.checkpoint_utils import save_checkpoint, load_checkpoint
-from utils.gcs_dataset_loader import GCSPyGDataset
-from utils.eval import pearson_correlation_coefficient
-
-# Set up logger for this module
 logger = logging.getLogger(__name__)
 
-"""
-TODO:
-    - more sophisticated heads with nonlinearity, e.g.:
-       * MLPs-> Pool -> Linear (done)
-       * 1 EGNN layer -> Pool -> Linear (done)
-       * 1 EGNN layer  (supernode) -> Linear 
-"""
+def report_metric(metric_values, metric_names, current_epoch):
+    """Reports a metric to the Vertex AI hyperparameter tuning service.
+    
+    Args:
+        metric_values (List[float]): List of metric values to report.
+        metric_names (List[str]): List of metric names corresponding to the values.
+        current_epoch (int): Current epoch number for global_step.
+    """
+    import hypertune
+    for metric_value, metric_name in zip(metric_values, metric_names):
+        is_valid_metric = (
+            metric_value is not None and
+            isinstance(metric_value, (int, float)) and
+            not math.isnan(metric_value) and not math.isinf(metric_value))
+
+        if is_valid_metric:
+            hpt = hypertune.HyperTune()
+
+            hpt.report_hyperparameter_tuning_metric(
+                hyperparameter_metric_tag=metric_name, 
+                metric_value=metric_value,
+                global_step=current_epoch
+            )
+        else:
+            logger.warning(f"Invalid metric value for {metric_name}: {metric_value}")
+
+def is_vertex_ai_trial():
+    """ Check if the code is running on a Vertex AI hyperparameter tuning trial."""
+    return "CLOUD_ML_TRIAL_ID" in os.environ
+
+def is_vertex_ai():
+    """ Check if the code is running on Vertex AI."""
+    return "AIP_MODEL_DIR" in os.environ
 
 def train_one_epoch(data_loader, 
                     model: nn.Module, 
@@ -39,6 +60,13 @@ def train_one_epoch(data_loader,
                     device: torch.device):
     """
     Train the model for one epoch.
+    Args:
+        data_loader: DataLoader for the training dataset.
+        model (nn.Module): The model to train.
+        optimizer (torch.optim.Optimizer): Optimizer for training.
+        lr_scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
+        loss_fn (Callable): Loss function to use.
+        device (torch.device): Device to run the training on.
     """
     model.train()
     total_loss = 0
@@ -67,9 +95,16 @@ def eval(data_loader,
          device: torch.device):
     """
     Evaluate the model on a dataset.
+
+    Args:
+        data_loader: DataLoader for the evaluation dataset.
+        model (nn.Module): The model to evaluate.
+        eval_fns (List[Callable]): List of evaluation functions to apply.
+        device (torch.device): Device to run the evaluation on.
     """
+    targets_all = []
+    predictions_all = []
     model.eval()
-    total_evals = [0 for _ in eval_fns]
     with torch.no_grad():
         for batch in data_loader:
             batch = batch.to(device)
@@ -77,11 +112,14 @@ def eval(data_loader,
             batch_indices = batch.batch if hasattr(batch, 'batch') else  torch.zeros(batch.x.size(0), dtype=torch.long, device=device)
             predictions = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr, batch_indices)
             targets = batch.y.view(-1, 1).float()
-            for i, eval_fn in enumerate(eval_fns):
-                total_evals[i] += eval_fn(predictions, targets)
+            predictions_all.append(predictions)
+            targets_all.append(targets)
 
-    avg_evals = [total / len(data_loader) for total in total_evals]
-    return avg_evals
+    predictions_all = torch.cat(predictions_all, dim=0)
+    targets_all = torch.cat(targets_all, dim=0)
+    evals = [eval_fn(predictions_all, targets_all) for eval_fn in eval_fns]
+    return evals        
+    
 
 def main():
     parser = argparse.ArgumentParser(description="Train regression head for binding affinity prediction.")
@@ -114,38 +152,35 @@ def main():
     parser.add_argument('--model_save_path', type=str, required=True, help='Path to save checkpoints')
     
     args = parser.parse_args()
-
     assert(args.pretrained_checkpoint is not None or not args.freeze_encoder), \
     "Pretrained checkpoint path must be provided if encoder is frozen."
 
     assert(args.load_model_path is None or args.pretrained_checkpoint is None), \
     "Cannot load both a pretrained checkpoint and a model checkpoint."
     
-    # --- Initialize Logging ---
-    # setup logging for Vertex AI
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    # --------------------------
-    
+
     os.makedirs(args.model_save_path, exist_ok=True)
+
+    if is_vertex_ai():
+        logger.info("Running on Vertex AI.")
+    else:
+        logger.info("Running locally.")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f'Using device: {device}')
     
-    # Load training, testing, and validation data from GCS
+    # Load training, testing, and validation data
     logger.info("Loading datasets...")
 
     # load data
     train_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
     val_dataset = GCSPyGDataset(root="", file_paths=[args.val_data_path])
     test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
-
-    logger.info(f"train dataset size: {len(train_dataset)}")
-    logger.info(f"val dataset size: {len(val_dataset)}")
-    logger.info(f"test dataset size: {len(test_dataset)}")
 
     train_loader = DataLoader(
         train_dataset,
@@ -167,6 +202,10 @@ def main():
         shuffle=False,
         num_workers=args.num_workers
     )
+
+    logger.info(f"Train loader size: {len(train_loader)}, {len(train_loader.dataset)} samples")
+    logger.info(f"Val loader size: {len(val_loader)}, {len(val_loader.dataset)} samples")
+    logger.info(f"Test loader size: {len(test_loader)}, {len(test_loader.dataset)} samples")
     
     node_features = train_dataset.node_features
     edge_features_dim = train_dataset.edge_features_dim
@@ -182,7 +221,8 @@ def main():
     
     # load pretrained weights if we have them
     if args.pretrained_checkpoint:
-        checkpoint = torch.load(args.pretrained_checkpoint)
+        pretrained_checkpoint_path = download_blob(args.pretrained_checkpoint)
+        checkpoint = torch.load(pretrained_checkpoint_path)
         
         # grab just the encoder part from the autoencoder checkpoint
         encoder_state_dict = {}
@@ -192,17 +232,14 @@ def main():
                 encoder_state_dict[new_key] = value
         
         encoder.load_state_dict(encoder_state_dict)
-        logger.info(f"Loaded model from {args.pretrained_checkpoint}")
-    elif args.load_model_path:
-        epoch_initial, checkpoint = load_checkpoint(model, optim, lr_scheduler, args.load_model_path)
-        logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
-        logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, {checkpoint["val_loss"]}, test loss: {checkpoint["test_loss"]}')
-    
+        logger.info(f"Loaded model from {pretrained_checkpoint_path}")
+
     if args.freeze_encoder:
         logger.info("Freezing encoder parameters.")
     else:
         logger.info("Training encoder parameters.")
         
+    # Build the regression head
     if args.head_method == 'mlp':
         model = MLPRegressionHead(
             encoder=encoder,
@@ -235,54 +272,92 @@ def main():
     else:
         raise ValueError(f"Unknown head method: {args.head_method}")
 
-
+    model = model.to(device)
     num_params = sum(p.numel() for p in model.parameters())
     logger.info(f"Number of parameters in model: {num_params}")
-    
-    model = model.to(device)
-
-    if args.freeze_encoder:
-        for param in encoder.parameters():
-            param.requires_grad = False
     
     optim = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate)
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optim, gamma=args.learning_rate_gamma)
     epoch_initial = 0
-    
-    os.makedirs(args.model_save_path, exist_ok=True)
+
+    # Load the model, if continuing a training run
+    if args.load_model_path:
+        epoch_initial, checkpoint = load_checkpoint(model, optim, lr_scheduler, args.load_model_path)
+        logger.info(f"Loaded model from {args.load_model_path} at epoch {epoch_initial}")
+        logger.info(f'Last epoch training loss: {checkpoint["train_loss"]}, val loss: {checkpoint["val_loss"]}, test loss: {checkpoint["test_loss"]}')
+
+        val_MSE, val_R  = eval(val_loader, model, [scaled_pK_rmse, pearson_correlation_coefficient], device)
+        test_MSE, test_R = eval(test_loader, model, [scaled_pK_rmse, pearson_correlation_coefficient], device) 
+        logger.info(f'Post-load validation MSE: {val_MSE}, R: {val_R}')
+        logger.info(f'Post-load test MSE: {test_MSE}, R: {test_R}')
+
+    # Freeze encoder if specified
+    if args.freeze_encoder:
+        for param in encoder.parameters():
+            param.requires_grad = False
     
     best_val_eval = float('inf')
     best_model_state = None
     best_epoch = -1
+
+    if is_vertex_ai_trial():
+        base_name_template = f"checkpoint_trial_{os.environ.get('CLOUD_ML_TRIAL_ID', 'default')}_epoch_{{}}.pt"
+    else:
+        base_name_template = "checkpoint_epoch_{}.pt"
+
+    epoch_log = []
+    try:
+        # train loop
+        for epoch in range(epoch_initial, args.num_epochs):
+            train_loss = train_one_epoch(train_loader, model, optim, lr_scheduler, nn.MSELoss(), device)
+
+            if epoch % args.checkpoint_interval == 0:
+                val_MSE, val_R  = eval(val_loader, model, [scaled_pK_rmse, pearson_correlation_coefficient], device)
+                test_MSE, test_R = eval(test_loader, model, [scaled_pK_rmse, pearson_correlation_coefficient], device)
+
+                epoch_log.append({
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_MSE": val_MSE.cpu().item(),
+                    "val_R": val_R.cpu().item(),
+                    "test_MSE": test_MSE.cpu().item(),
+                    "test_R": test_R.cpu().item()
+                })
+
+                if val_MSE < best_val_eval:
+                    best_val_eval = val_MSE
+                    best_model_state = model.state_dict()
+                    best_epoch = epoch
+                    logger.info(f"New best model found at epoch {best_epoch} with val MSE {best_val_eval:.4f} and Pearson Corr Coeff {val_R:.4f}")
+
+                checkpoint_basename = base_name_template.format(epoch)
+                save_checkpoint(
+                    model,
+                    optim,
+                    lr_scheduler,
+                    epoch,
+                    train_loss,
+                    val_MSE,
+                    test_MSE,
+                    f"{args.model_save_path}/{checkpoint_basename}"
+                )
+                logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val MSE: {val_MSE:.4f},  Val R: {val_R:.4f}, Test MSE: {test_MSE:.4f}, Test R: {test_R:.4f}")
+
+                if is_vertex_ai_trial():
+                    report_metric([val_MSE, val_R], ['mse', 'pearson_coeff'], epoch)
     
-    # train loop
-    for epoch in range(epoch_initial, args.num_epochs):
-        train_loss = train_one_epoch(train_loader, model, optim, lr_scheduler, nn.MSELoss(), device)
-        
-        if epoch % args.checkpoint_interval == 0:
-            val_MLE, val_R  = eval(val_loader, model, [nn.MSELoss(), pearson_correlation_coefficient], device)
-            test_MLE, test_R = eval(test_loader, model, [nn.MSELoss(), pearson_correlation_coefficient], device)
-            
-            if val_MLE < best_val_eval:
-                best_val_eval = val_MLE
-                best_model_state = model.state_dict()
-                best_epoch = epoch
-                logger.info(f"New best model found at epoch {best_epoch} with val MSE {best_val_eval:.4f} and Pearson Corr Coeff {val_R:.4f}")
-            
-            save_checkpoint(
-                model,
-                optim,
-                lr_scheduler,
-                epoch,
-                train_loss,
-                val_MLE,
-                test_MLE,
-                f"{args.model_save_path}/checkpoint_epoch_{epoch}.pt"
-            )
-            logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val MSE: {val_MLE:.4f},  Val R: {val_R:.4f}, Test MSE: {test_MLE:.4f}, Test R: {test_R:.4f}")
+        if best_model_state is not None:
+            torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
+            logger.info(f"Best model saved from epoch {best_epoch} with val MSE {best_val_eval:.4f}")
     
-    if best_model_state is not None:
-        torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
-        logger.info(f"Best model saved from epoch {best_epoch} with val MSE {best_val_eval:.4f}")
+        csv_path = os.path.join(args.model_save_path, "epoch_metrics.csv")
+        save_csv_file(epoch_log, csv_path)
+
+    except Exception as e:
+        logger.error(f"An error occurred during training: {e}")
+        if is_vertex_ai_trial():
+            sys.exit(0) # to allow hp tuning to continue
+        else:
+            sys.exit(1)
 if __name__ == '__main__':
     main()

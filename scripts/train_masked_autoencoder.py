@@ -3,33 +3,57 @@ import os
 import logging
 from typing import Callable
 import sys
-from pathlib import Path
-
-# Add project root to sys.path so modules like 'models' and 'utils' can be found
-project_root = Path(__file__).resolve().parent.parent
-sys.path.append(str(project_root))
+import math
 
 from torch import nn, torch
 from torch.optim.lr_scheduler import ExponentialLR
 
 from torch_geometric import seed_everything
-from torch_geometric.data import Data as PyGData
 from torch_geometric.loader import DataLoader
-
-seed_everything(1313)
 
 from models.bimolecular_affinity_models import MaskedGeometricAutoencoder, Encoder, Decoder
 from utils.checkpoint_utils import save_checkpoint, load_checkpoint
 from utils.losses import l2_loss
 from utils.gcs_dataset_loader import GCSPyGDataset
 
-# Set up logger for this module
+seed_everything(1313)
+
 logger = logging.getLogger(__name__)
 
-"""
-TODO:
-    - learning rate scheduler (weight decay)
-"""
+
+def report_metric(metric_value, current_epoch):
+    """Reports a metric to the Vertex AI hyperparameter tuning service.
+    
+    Args:
+        metric_values (List[float]): List of metric values to report.
+        metric_names (List[str]): List of metric names corresponding to the values.
+        current_epoch (int): Current epoch number for global_step.
+    """
+    import hypertune
+
+    is_valid_metric = (
+        metric_value is not None and
+        isinstance(metric_value, (int, float)) and
+        not math.isnan(metric_value) and not math.isinf(metric_value))
+    
+    if is_valid_metric:
+        hpt = hypertune.HyperTune()
+
+        hpt.report_hyperparameter_tuning_metric(
+            hyperparameter_metric_tag='val_loss',
+            metric_value=metric_value,
+            global_step=current_epoch
+        )
+    else:
+        logger.warning(f"Invalid metric value: {metric_value} at epoch {current_epoch}")
+    
+def is_vertex_ai_trial():
+    """ Check if the code is running on a Vertex AI hyperparameter tuning trial."""
+    return "CLOUD_ML_TRIAL_ID" in os.environ
+
+def is_vertex_ai():
+    """ Check if the code is running on Vertex AI."""
+    return "AIP_MODEL_DIR" in os.environ
 
 def train_one_epoch(data_loader, 
                     model: nn.Module, 
@@ -39,15 +63,21 @@ def train_one_epoch(data_loader,
                     device: torch.device):
     """
     Train the model for one epoch.
+
+    Args:
+        data_loader (DataLoader): DataLoader for training data.
+        model (nn.Module): The model to train.
+        optimizer (torch.optim.Optimizer): Optimizer for training.
+        lr_scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
+        loss_fn (Callable): Loss function to use.
+        device (torch.device): Device to run the training on.
     """
     model.train()
     total_loss = 0
     for batch in data_loader:
         batch = batch.to(device)
         optimizer.zero_grad()
-
-        batch_indices = batch.batch if hasattr(batch, 'batch') else torch.zeros(batch.x.size(0), dtype=torch.long, device=device)
-        predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr, batch_indices)
+        predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr)
         loss = loss_fn(predicted_pos, batch.pos[mask_indices])
         loss.backward()
         optimizer.step()
@@ -63,19 +93,27 @@ def eval(data_loader,
          device: torch.device):
     """
     Evaluate the model on a dataset.
+
+    Args:
+        data_loader: DataLoader for the evaluation dataset.
+        model (nn.Module): The model to evaluate.
+        eval_fn (Callable): Evaluation function to apply.
+        device (torch.device): Device to run the evaluation on.
     """
-    total_error = 0
+    pos_all = []
+    predicted_pos_all = []
     model.eval()
     with torch.no_grad():
         for batch in data_loader:
             batch = batch.to(device)
-            
-            batch_indices = batch.batch if hasattr(batch, 'batch') else  torch.zeros(batch.x.size(0), dtype=torch.long, device=device)
-            predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr, batch_indices)
-            total_error += eval_fn(predicted_pos, batch.pos[mask_indices])
+            predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr)
+            pos_all.append(batch.pos[mask_indices])
+            predicted_pos_all.append(predicted_pos)
 
-    avg_error = total_error / len(data_loader)
-    return avg_error 
+    pos_all = torch.cat(pos_all, dim=0)
+    predicted_pos_all = torch.cat(predicted_pos_all, dim=0)
+    error = eval_fn(predicted_pos_all, pos_all)
+    return error
 
 def main():
     parser = argparse.ArgumentParser(description="Main script for the project.")
@@ -107,21 +145,23 @@ def main():
 
     args = parser.parse_args()
 
-    # --- Initialize Logging ---
-    # setup logging for Vertex AI
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    # --------------------------
 
     os.makedirs(args.model_save_path, exist_ok=True)
+
+    if is_vertex_ai():
+        logger.info("Running on Vertex AI.")
+    else:
+        logger.info("Running locally.")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f'Using device: {device}')
 
-    # Load training, testing, and validation data from GCS
+    # Load training, testing, and validation data
     logger.info("Loading datasets...")
 
     train_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
@@ -196,43 +236,58 @@ def main():
     best_model_state = None
     best_epoch = -1
 
-    # Training loop
-    for epoch in range(epoch_initial, args.num_epochs):
-        train_loss = train_one_epoch(train_loader,
-                                     model,
-                                     optim,
-                                     lr_scheduler,
-                                     l2_loss,
-                                     device)
+    if is_vertex_ai_trial():
+        base_name_template = f"checkpoint_trial_{os.environ.get('CLOUD_ML_TRIAL_ID', 'default')}_epoch_{{}}.pt"
+    else:
+        base_name_template = "checkpoint_epoch_{}.pt"
 
-        if epoch % args.checkpoint_interval == 0:
-            val_loss = eval(val_loader,
-                            model,
-                            l2_loss,
-                            device)
-            test_loss = eval(test_loader,
-                            model,
-                            l2_loss,
-                            device)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_model_state = model.state_dict()
-                best_epoch = epoch
-                logger.info(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
+    try:
+        # Training loop
+        for epoch in range(epoch_initial, args.num_epochs):
+            train_loss = train_one_epoch(train_loader,
+                                         model,
+                                         optim,
+                                         lr_scheduler,
+                                         l2_loss,
+                                         device)
 
-            save_checkpoint(model,
-                            optim,
-                            lr_scheduler,
-                            epoch,
-                            train_loss,
-                            val_loss,
-                            test_loss,
-                            f"{args.model_save_path}/checkpoint_epoch_{epoch}.pt")
-            logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Test Loss: {test_loss:.4f}")
+            if epoch % args.checkpoint_interval == 0:
+                val_loss = eval(val_loader,
+                                model,
+                                l2_loss,
+                                device)
+                test_loss = eval(test_loader,
+                                model,
+                                l2_loss,
+                                device)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_model_state = model.state_dict()
+                    best_epoch = epoch
+                    logger.info(f"New best model found at epoch {best_epoch} with val loss {best_val_loss:.4f}")
 
-    if best_model_state is not None:
-        torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
-        logger.info(f"Best model saved from epoch {best_epoch} with val loss {best_val_loss:.4f}")
+                checkpoint_basename = base_name_template.format(epoch)
+                save_checkpoint(model,
+                                optim,
+                                lr_scheduler,
+                                epoch,
+                                train_loss,
+                                val_loss,
+                                test_loss,
+                                f"{args.model_save_path}/{checkpoint_basename}")
+                logger.info(f"Epoch {epoch}/{args.num_epochs}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Test Loss: {test_loss:.4f}")
 
+                if is_vertex_ai_trial():
+                    report_metric(best_val_loss, epoch)
+
+        if best_model_state is not None:
+            torch.save(best_model_state, f"{args.model_save_path}/best_model.pt")
+            logger.info(f"Best model saved from epoch {best_epoch} with val loss {best_val_loss:.4f}")
+    except Exception as e:
+        logger.error(f"An error occurred during training: {e}")
+        if is_vertex_ai_trial():
+            sys.exit(0) # to allow hp tuning to continue
+        else:
+            sys.exit(1)
 if __name__ == "__main__":
     main()

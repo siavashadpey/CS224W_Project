@@ -77,6 +77,7 @@ class EGNN(torch.nn.Module):
             else:
                 nn_pos = None
             self.convs.append(EGNNConv(nn_edge, nn_node, pos_dim, nn_pos, skip_connection))
+            
     def forward(self,
                 x: Tensor,
                 pos: Tensor,
