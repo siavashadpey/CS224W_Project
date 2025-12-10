@@ -94,23 +94,25 @@ class EGNN(torch.nn.Module):
                 edge_index: Adj,
                 edge_attr: Optional[Tensor] = None) -> Tuple[Tensor, Tensor]:
 
-        pos_clamp = 500.0  # for final position 
-        pos_update_clamp = 5.0  # for aggregated position update
+        pos_clamp = 10.0  # for final position 
+        pos_update_clamp = 3.0  # for aggregated position update
 
         for conv in self.convs:
             x, pos_new = conv(x, pos, edge_index, edge_attr)
 
-        # scale position updates
-        if self.use_pos_scale:
-            pos_update = pos_new - pos
-            pos_update = pos_update * torch.sigmoid(self.pos_scale_param)
+            if pos_new is not pos: # check if positions were updated
+                pos_update = pos_new - pos
+    
+                # scale position updates
+                if self.use_pos_scale:
+                    pos_update = pos_update * torch.sigmoid(self.pos_scale_param)
 
-            # softer clamping - allow larger updates
-            pos_update = torch.clamp(pos_update, min=-pos_update_clamp, max=pos_update_clamp)
-            pos = pos + pos_update
+                # softer clamping - allow larger updates
+                pos_update = torch.clamp(pos_update, min=-pos_update_clamp, max=pos_update_clamp)
+                pos = pos + pos_update
 
-            # clamp final positions
-            pos = torch.clamp(pos, min=-pos_clamp, max=pos_clamp)
+                # clamp final positions
+                pos = torch.clamp(pos, min=-pos_clamp, max=pos_clamp)
             
         return (x, pos)
         

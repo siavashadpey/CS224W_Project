@@ -49,11 +49,12 @@ class EGNNConv(MessagePassing):
         self.eps = 1e-8  # Epsilon for numerical stability
         
         self.clamp = True
-        self.node_clamp = 50.0  # for node features 
-        self.pos_clamp = 500.0  # for final position 
-        self.pos_update_clamp = 3.0  # for aggregated position update
-        self.edge_clamp = 50.0   # for features in message
-        self.pos_influence_clamp = 2.0 # for individual edge position influence
+        self.node_clamp = 200.0  # for node features 
+        self.edge_clamp = 200.0   # for features in message
+    
+        self.pos_clamp = 40.0  # for final position 
+        self.pos_update_clamp = 12.0  # for aggregated position update
+        self.pos_influence_clamp = 6.0 # for individual edge position influence
 
         self.reset_parameters()
     

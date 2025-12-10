@@ -15,8 +15,6 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch_geometric import seed_everything
 from torch_geometric.data import Data as PyGData
 
-torch.autograd.set_detect_anomaly(True)
-
 seed_everything(1313)
 
 from models.bimolecular_affinity_models import MaskedGeometricAutoencoder, Encoder, Decoder
@@ -99,9 +97,6 @@ def train_one_epoch(data_loader,
             if total_grad_norm > 10000.0:  # Gradient explosion threshold
                 logger.warning(f"Batch {batch_idx}: Max grad norm={max_grad_norm}, Exploding gradient norm={total_grad_norm:.2f}")
                 exploding_count += 1
-                # skipped_count += 1
-                # optimizer.zero_grad()  # Clear the bad gradients
-                # continue
             elif total_grad_norm > 1000.0:
                 moderate_count += 1
                 if batch_idx % 100 == 0:
@@ -111,7 +106,10 @@ def train_one_epoch(data_loader,
 
             # *** Add gradient clipping to avoid exploding gradients causing NaN loss
             # clip_grad_norm_ does in-place update and returns original to grad_norm
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
+            if total_grad_norm > 5000.0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5000.0)
+                logger.warning(f"Clipped large gradients: {total_grad_norm:.2f} -> 1000.0")
 
             # Check for NaN gradients after clipping
             has_nan_grad = False
@@ -306,7 +304,7 @@ def main():
     )
 
     # Model
-    encoder = Encoder( 
+    encoder = Encoder(
              in_channels=train_dataset.node_features, 
              hidden_channels=args.hidden_dim, 
              num_layers=args.num_encoder_layers,

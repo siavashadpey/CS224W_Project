@@ -196,7 +196,6 @@ class MaskedGeometricAutoencoder(nn.Module):
                 nn.init.xavier_uniform_(module.weight, gain=0.01)  # Small gain
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
-                print("Applied Xavier initialization to linear layer")
             elif isinstance(module, nn.Parameter):
                 module.data.normal_(0, 0.01)
 
@@ -209,13 +208,17 @@ class MaskedGeometricAutoencoder(nn.Module):
                 edge_index: Adj,
                 edge_attr: Tensor, 
                 batch_indices: Tensor) -> Tuple[Tensor, Tensor]:
-        """Forward pass"""
+        """Forward pass with position normalization"""
     
         if torch.isnan(x).any():
             print("NaN in input x!")
         if torch.isnan(pos).any():
             print("NaN in input pos")
             
+        pos_mean = pos.mean(dim=0, keepdim=True)
+        pos_std = pos.std(dim=0, keepdim=True).clamp(min=1e-6)
+        pos_normalized = (pos - pos_mean) / pos_std
+
         # Randomly mask nodes and their edges.
         num_nodes = x.size(0)
         num_masked = max(1, int(self.masking_ratio * num_nodes))
@@ -235,7 +238,7 @@ class MaskedGeometricAutoencoder(nn.Module):
             )
         # sliced features and batch index for the visible nodes 
         x_v = x[vis_indices]
-        pos_v = pos[vis_indices]
+        pos_v = pos_normalized[vis_indices]
 
         # Encode visible nodes
         x_v, pos_v = self.encoder(x_v, pos_v, edge_index_v, edge_attr_v)
@@ -244,11 +247,11 @@ class MaskedGeometricAutoencoder(nn.Module):
         # the masked nodes share the same learnable token
         # and their positions are initialized with random noise 
         z_m = self.masked_node_token.repeat(num_masked, 1).to(x.device)
-        pos_m = torch.randn((num_masked, pos.size(1)), device=pos.device)
+        pos_m = self.randn((num_masked, pos_normalized.size(1)), device=pos_normalized.device) * 0.3
 
         # Combine visible and masked nodes
         z = torch.empty((num_nodes, x_v.size(1)), device=x.device, dtype=x.dtype)
-        pos_combined = torch.empty((num_nodes, pos.size(1)), device=pos.device, dtype=pos.dtype)
+        pos_combined = torch.empty((num_nodes, pos_normalized.size(1)), device=pos_normalized.device, dtype=pos_normalized.dtype)
         
         z[vis_indices,:] = x_v
         z[mask_indices,:] = z_m
@@ -256,7 +259,9 @@ class MaskedGeometricAutoencoder(nn.Module):
         pos_combined[mask_indices,:] = pos_m
 
         # Decode to reconstruct masked node positions
-        pos_reconstructed = self.decoder(z, pos_combined, edge_index, edge_attr)
+        pos_reconstructed_norm = self.decoder(z, pos_combined, edge_index, edge_attr)
+
+        pos_reconstructed = pos_reconstructed_norm * pos_std + pos_mean
 
         return pos_reconstructed[mask_indices,:], mask_indices
 

@@ -10,7 +10,7 @@ export PROJECT_ID="totemic-phoenix-476721-n5"
 export IMAGE_NAME="cs224w-training"
 export IMAGE_TAG="latest"
 export IMAGE_URI="gcr.io/${PROJECT_ID}/${IMAGE_NAME}:${IMAGE_TAG}"
-export SKIP_BUILD="${SKIP_BUILD:-False}"
+export SKIP_BUILD="${SKIP_BUILD:-false}"
 export GCS_BUCKET="${GCS_BUCKET:-cs224w-2025-mae-gnn-bucket}"
 export TRAIN_PREFIX="${TRAIN_PREFIX:-data_w_pos/plgems_train.pt}"
 export VAL_PREFIX="${VAL_PREFIX:-data_w_pos/plgems_validation.pt}"
@@ -38,12 +38,12 @@ echo "Learning Rate: ${LEARNING_RATE}"
 echo ""
 
 # Build image if needed
-if ! SKIP_BUILD; then
-    echo "Building Docker image..."
-    docker build -t ${IMAGE_URI} --no-cache.
-    docker push ${IMAGE_URI}
-else
+if [ "${SKIP_BUILD}" = "true" ]; then
     echo "Using existing Docker image"
+else
+    echo "Building Docker image..."
+    docker build -t ${IMAGE_URI} --no-cache .
+    docker push ${IMAGE_URI}
 fi
 
 echo ""

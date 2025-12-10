@@ -127,36 +127,41 @@ job = aiplatform.CustomContainerTrainingJob(
 )
 
 # Submit with proper arg list format
-job.run(
-    replica_count=1,
-    machine_type="${MACHINE_TYPE}",
-    accelerator_type="${GPU_TYPE}" if "${USE_GPU}" == "true" else None,
-    accelerator_count=1 if "${USE_GPU}" == "true" else 0,
-    environment_variables={
-        "GCS_BUCKET": GCS_BUCKET,  # Needed for checkpointing
-        "CHECKPOINT_ID": CHECKPOINT_ID, 
-        "TRAIN_PREFIX": "${TRAIN_PREFIX}",
-        "VAL_PREFIX": "${VAL_PREFIX}",
-        "TEST_PREFIX": "${TEST_PREFIX}",
-    },
-    args=[
-        "--gcs_bucket", "${GCS_BUCKET}",
-        "--train_prefix", "${TRAIN_PREFIX}",
-        "--val_prefix", "${VAL_PREFIX}",
-        "--test_prefix", "${TEST_PREFIX}",
-        "--num_epochs", "${NUM_EPOCHS}",
-        "--batch_size", "${BATCH_SIZE}",
-        "--hidden_dim", "${HIDDEN_DIM}",
-        "--num_encoder_layers", "${NUM_ENCODER_LAYERS}",
-        "--num_decoder_layers", "${NUM_DECODER_LAYERS}",
-        "--masking_ratio", "${MASKING_RATIO}",
-        "--pos_scale", "${POS_SCALE}",
-        "--checkpoint_interval", "${CHECKPOINT_INTERVAL}",
-        "--cache_dir", "/tmp/pyg_cache",
-        "--model_save_path", "/tmp/model",
-    ],
-    sync=False,
-)
+try: 
+    job.run(
+        replica_count=1,
+        machine_type="${MACHINE_TYPE}",
+        accelerator_type="${GPU_TYPE}" if "${USE_GPU}" == "true" else None,
+        accelerator_count=1 if "${USE_GPU}" == "true" else 0,
+        environment_variables={
+            "GCS_BUCKET": GCS_BUCKET,  # Needed for checkpointing
+            "TRAIN_PREFIX": "${TRAIN_PREFIX}",
+            "VAL_PREFIX": "${VAL_PREFIX}",
+            "TEST_PREFIX": "${TEST_PREFIX}",
+        },
+        args=[
+            "--gcs_bucket", "${GCS_BUCKET}",
+            "--train_prefix", "${TRAIN_PREFIX}",
+            "--val_prefix", "${VAL_PREFIX}",
+            "--test_prefix", "${TEST_PREFIX}",
+            "--learning_rate", "${LEARNING_RATE}",
+            "--num_epochs", "${NUM_EPOCHS}",
+            "--batch_size", "${BATCH_SIZE}",
+            "--hidden_dim", "${HIDDEN_DIM}",
+            "--num_encoder_layers", "${NUM_ENCODER_LAYERS}",
+            "--num_decoder_layers", "${NUM_DECODER_LAYERS}",
+            "--masking_ratio", "${MASKING_RATIO}",
+            "--pos_scale", "${POS_SCALE}",
+            "--checkpoint_interval", "${CHECKPOINT_INTERVAL}",
+            "--cache_dir", "/tmp/pyg_cache",
+            "--model_save_path", "/tmp/model",
+        ],
+        sync=False,
+    )
+except Exception as e:
+    import sys
+    print(f"FATAL ERROR DURING JOB SUBMISSION: {e}", file=sys.stderr)
+    sys.exit(1)
 
 print(f"\nJob submitted: {JOB_NAME}")
 print(f"   GCS Bucket: {GCS_BUCKET}")
