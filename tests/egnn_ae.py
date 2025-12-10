@@ -280,7 +280,7 @@ if __name__ == "__main__":
 
     # Optimization/loss parameters
     LEARNING_RATE = 1E-4
-    NB_EPOCHS = 5
+    NB_EPOCHS = 100
 
     # Prepare dataloaders
     train_dataset = GenerateDataset(num_graphs_per_node=NUM_GRAPHS_PER_NODE_TRAIN,
