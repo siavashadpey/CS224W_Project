@@ -23,7 +23,6 @@ CS224W_Project/
 │   ├── train_prediction_head.py        # Model training script for the regression task
 │   ├── run_gcp_vertex_mae.py           # MAE training job submission script
 │   ├── run_gcp_vertex_head.py          # Model training job submission script
-│   ├── submit_hyperparam_tuning.py     # MAE pretraining hyperparameter tunning job submission script
 │   ├── run_gcp_vertex_hp_tuning_head.py# MAE pretraining hyperparameter tunning job submission script
 ├── utils/                              # Utility modules
 │   ├── gcs_dataset_loader.py           # Data loading (supports GCS)
