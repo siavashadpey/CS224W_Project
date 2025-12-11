@@ -31,7 +31,7 @@ CS224W_Project/
 │   └── eval.py                         # Eval functions
 │   └── checkpoint_utils.py             # Checkpoint management
 ├── utils/                              # Tests
-├── utils/                              # Notebooks for dataset analysis
+├── notebooks/                          # Notebooks for dataset analysis
 ├── Dockerfile                          # Dockerfile for building Docker image
 ```
 
