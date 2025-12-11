@@ -1,8 +1,5 @@
-import sys
 import os 
 from typing import Union, Callable, Tuple, Optional, List
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from models import EGNN
 
@@ -26,6 +23,7 @@ print(f"Using device: {device}")
 '''
 Implementation of Experimnent 5.2 in `"E(n) Equivariant Graph Neural Networks"
     <https://arxiv.org/abs/2102.09844>`_ paper
+The actual experiment is a lighter version, to be able to run as a test in limited time.
 '''
 class AE(torch.nn.Module):
     def __init__(self, 
@@ -265,12 +263,12 @@ RESUME_FROM = None  # Set to checkpoint path to resume, e.g., "checkpoints/check
 if __name__ == "__main__":
 
     # Graph parameters
-    NODES_PER_EDGE = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    NODES_PER_EDGE = [7, 8, 9, 10, 16]
     PROB_EDGE = 0.25
     BATCH_SIZE = 128
-    NUM_GRAPHS_PER_NODE_TRAIN = 5
+    NUM_GRAPHS_PER_NODE_TRAIN = 50
     NUM_GRAPHS_PER_NODE_TEST = 5
-    POS_DIM = 8
+    POS_DIM = 3
     EDGE_DIM = 1
 
     # Model parameters
@@ -280,7 +278,7 @@ if __name__ == "__main__":
 
     # Optimization/loss parameters
     LEARNING_RATE = 1E-4
-    NB_EPOCHS = 100
+    NB_EPOCHS = 1000
 
     # Prepare dataloaders
     train_dataset = GenerateDataset(num_graphs_per_node=NUM_GRAPHS_PER_NODE_TRAIN,
