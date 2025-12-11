@@ -9,7 +9,6 @@ from google.cloud import aiplatform
 import os
 import sys
 
-# Get from environment variables (SECURE - not hardcoded)
 PROJECT_ID = os.getenv('GCP_PROJECT_ID')
 REGION = os.getenv('GCP_REGION', 'us-central1')  # Default if not set
 
@@ -19,7 +18,7 @@ if not PROJECT_ID:
     sys.exit(1)
 
 BUCKET_NAME = f"cs224w-2025-mae-gnn-central"
-IMAGE_URI = f"gcr.io/{PROJECT_ID}/cs224w-project_vertex:latest"
+IMAGE_URI = f"gcr.io/{PROJECT_ID}/cs224w-project_mae:latest"
 
 print(f"Project ID: {PROJECT_ID}")
 print(f"Region: {REGION}")
@@ -36,7 +35,7 @@ aiplatform.init(
 
 # Create training job
 job = aiplatform.CustomContainerTrainingJob(
-    display_name="cs224w-egnn-training",
+    display_name="cs224w-egnn-training-mae",
     container_uri=IMAGE_URI,
 )
 
@@ -51,6 +50,22 @@ job.run(
         "GCS_BUCKET": BUCKET_NAME,
         "AIP_MODEL_DIR": "/tmp/model"
     },
+    args=[
+        "--train_data_path", "/workspace/data/plgems_train.pt",
+        "--val_data_path", "/workspace/data/plgems_validation.pt",
+        "--test_data_path", "/workspace/data/plgems_full_casf2016.pt",
+        "--model_save_path", "/tmp/model",
+        "--num_epochs", "1000",
+        "--batch_size", "16",
+        "--learning_rate", "1E-4",
+        "--learning_rate_gamma", "0.999",
+        "--num_workers", "8",
+        "--num_encoder_layers", "4",
+        "--num_decoder_layers", "4",
+        "--hidden_dim", "256",
+        "--masking_ratio", "0.3",
+        "--checkpoint_interval", "5"
+    ],
     sync=True  # Don't wait for completion
 )
 

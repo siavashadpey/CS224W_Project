@@ -12,7 +12,7 @@ setup(
     install_requires=[
         "torch>=2.5.0", 
         "torch-geometric",
-        "numpy",
+        "numpy<2",
     ],
     
     extras_require={

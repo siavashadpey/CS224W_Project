@@ -10,6 +10,8 @@ WORKDIR /workspace
 
 RUN pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --upgrade pip
 
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir \
     --trusted-host pypi.org \
     --trusted-host files.pythonhosted.org \
@@ -34,14 +36,15 @@ RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pyth
     google-cloud-storage \
     google-cloud-aiplatform \
     wandb \
-    tensorboard
+    tensorboard \ 
+    cloudml-hypertune
 
 COPY . .
 RUN pip install --no-cache-dir -e .
 
-RUN mkdir -p /workspace/checkpoints /workspace/data /workspace/logs
+RUN mkdir -p /workspace/checkpoints /workspace/data2 /workspace/logs
 
 # Expose port for TensorBoard (optional)
 EXPOSE 6006
 
-CMD ["python", "tests/egnn_ae.py"]
+ENTRYPOINT ["python", "scripts/train_masked_autoencoder.py"]
