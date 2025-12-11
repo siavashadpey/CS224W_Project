@@ -80,7 +80,6 @@ def train_one_epoch(data_loader,
         predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr)
         loss = loss_fn(predicted_pos, batch.pos[mask_indices])
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # better stability
         optimizer.step()
         lr_scheduler.step()
         total_loss += loss.item()
