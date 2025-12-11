@@ -11,7 +11,7 @@ from torch_geometric import seed_everything
 from torch_geometric.loader import DataLoader
 from models.bimolecular_affinity_models import Encoder, LinearRegressionHead, MLPRegressionHead, EGNNRegressionHead, EGNNMLPRegressionHead
 from utils.checkpoint_utils import save_checkpoint, load_checkpoint, download_blob, save_csv_file
-from utils.gcs_dataset_loader import GCSPyGDataset
+from utils.gcs_dataset_loader import GCSPyGDataset, create_gcs_dataloaders
 from utils.eval import pearson_correlation_coefficient, scaled_pK_rmse
 
 seed_everything(1313)
@@ -177,35 +177,47 @@ def main():
     # Load training, testing, and validation data
     logger.info("Loading datasets...")
 
-    # load data
-    train_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
-    val_dataset = GCSPyGDataset(root="", file_paths=[args.val_data_path])
-    test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
+    if is_vertex_ai():
+        GCS_BUCKET = os.environ.get("GCS_BUCKET")
+        train_loader, val_loader, test_loader, train_dataset= create_gcs_dataloaders(
+            bucket_name=GCS_BUCKET,
+            train_prefix=args.train_data_path,
+            val_prefix=args.val_data_path,
+            test_prefix=args.test_data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            local_cache_dir="/tmp/data_cache"
+        )
+    else:
+        train_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
+        val_dataset = GCSPyGDataset(root="", file_paths=[args.val_data_path])   
+        test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers
-    )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers
+        )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers
-    )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers
+        )
 
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers
-    )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers
+        )
 
     logger.info(f"Train loader size: {len(train_loader)}, {len(train_loader.dataset)} samples")
     logger.info(f"Val loader size: {len(val_loader)}, {len(val_loader.dataset)} samples")
     logger.info(f"Test loader size: {len(test_loader)}, {len(test_loader.dataset)} samples")
+    logger.info(f"Example data in train dataset: {train_loader.dataset[0]}")
     
     node_features = train_dataset.node_features
     edge_features_dim = train_dataset.edge_features_dim

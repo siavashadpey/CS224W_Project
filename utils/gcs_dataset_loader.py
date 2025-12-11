@@ -36,25 +36,6 @@ def download_gcs_files(bucket_name: str, prefix: str, local_cache_dir: str, forc
     Returns:
         A list of local file paths for the downloaded files.
     """
-    # --- Bypass GCS Download for local testing ---
-    if os.environ.get('SKIP_GCS_DOWNLOAD') == 'True':
-        logger.warning(f"SKIP_GCS_DOWNLOAD is True. Simulating files found in {local_cache_dir}")
-
-        # Read the list of files present in the cache directory
-        local_file_paths = [
-            os.path.join(local_cache_dir, f)
-            for f in os.listdir(local_cache_dir)
-            if f.endswith('.pt')
-        ]
-
-        if not local_file_paths:
-            logger.error(f"No mock files found in simulated cache directory: {local_cache_dir}")
-            raise RuntimeError("Local test failed: mock data not found in cache location")
-
-        logger.info(f"Local files found and simulated: {len(local_file_paths)}")
-        return local_file_paths
-    # -------
-
     if storage is None:
         raise RuntimeError("The 'google-cloud-storage' library is required but failed to import.")
 
@@ -195,7 +176,6 @@ def create_gcs_dataloaders(
     # 1.1 Training Data
     train_cache_dir = os.path.join(local_cache_dir, 'train')
     train_paths = download_gcs_files(bucket_name, train_prefix, train_cache_dir, force_download)
-    
     # 1.2 Validation Data
     val_cache_dir = os.path.join(local_cache_dir, 'val')
     val_paths = download_gcs_files(bucket_name, val_prefix, val_cache_dir, force_download)

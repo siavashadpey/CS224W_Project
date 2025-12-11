@@ -14,7 +14,7 @@ from torch_geometric.loader import DataLoader
 from models.bimolecular_affinity_models import MaskedGeometricAutoencoder, Encoder, Decoder
 from utils.checkpoint_utils import save_checkpoint, load_checkpoint
 from utils.losses import l2_loss
-from utils.gcs_dataset_loader import GCSPyGDataset
+from utils.gcs_dataset_loader import GCSPyGDataset, create_gcs_dataloaders
 
 seed_everything(1313)
 
@@ -80,6 +80,7 @@ def train_one_epoch(data_loader,
         predicted_pos, mask_indices = model(batch.x, batch.pos, batch.edge_index, batch.edge_attr)
         loss = loss_fn(predicted_pos, batch.pos[mask_indices])
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0) # better stability
         optimizer.step()
         lr_scheduler.step()
         total_loss += loss.item()
@@ -164,37 +165,48 @@ def main():
     # Load training, testing, and validation data
     logger.info("Loading datasets...")
 
-    train_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
-    val_dataset = GCSPyGDataset(root="", file_paths=[args.val_data_path])   
-    test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
+    if is_vertex_ai():
+        GCS_BUCKET = os.environ.get("GCS_BUCKET")
+        print(GCS_BUCKET, args.train_data_path)
+        train_loader, val_loader, test_loader, train_dataset = create_gcs_dataloaders(
+            bucket_name=GCS_BUCKET,
+            train_prefix=args.train_data_path,
+            val_prefix=args.val_data_path,
+            test_prefix=args.test_data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            local_cache_dir="/tmp/data_cache"
+        )
+    else:
+        train_dataset = GCSPyGDataset(root="", file_paths=[args.train_data_path])
+        val_dataset = GCSPyGDataset(root="", file_paths=[args.val_data_path])   
+        test_dataset = GCSPyGDataset(root="", file_paths=[args.test_data_path])
 
-    # split test dataset into validation and test sets (80-20 split)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers
+        )
 
-    logger.info(f"train dataset size: {len(train_dataset)}")
-    logger.info(f"val dataset size: {len(val_dataset)}")
-    logger.info(f"test dataset size: {len(test_dataset)}")
-    logger.info(f"Example data in train dataset: {train_dataset[0]}")
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers
+        )
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers
-    )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers
+        )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers
-    )
-
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers
-    )
+    logger.info(f"Train loader size: {len(train_loader)}, {len(train_loader.dataset)} samples")
+    logger.info(f"Val loader size: {len(val_loader)}, {len(val_loader.dataset)} samples")
+    logger.info(f"Test loader size: {len(test_loader)}, {len(test_loader.dataset)} samples")
+    logger.info(f"Example data in train dataset: {train_loader.dataset[0]}")
 
     # Model
     encoder = Encoder(
