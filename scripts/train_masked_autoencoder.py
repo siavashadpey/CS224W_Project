@@ -7,7 +7,6 @@ import math
 
 from torch import nn, torch
 from torch.optim.lr_scheduler import ExponentialLR
-#from torchviz import make_dot
 
 from torch_geometric import seed_everything
 from torch_geometric.loader import DataLoader

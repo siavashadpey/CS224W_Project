@@ -11,13 +11,14 @@ WORKDIR /workspace
 RUN pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --upgrade pip
 
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+    
+RUN pip install --no-cache-dir \
     --trusted-host pypi.org \
     --trusted-host files.pythonhosted.org \
     --trusted-host data.pyg.org \
     torch-geometric \
     torch-scatter \
     torch-sparse \
-    torchviz \
     -f https://data.pyg.org/whl/torch-2.5.0+cu121.html
 
 RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pythonhosted.org \

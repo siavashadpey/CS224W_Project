@@ -49,12 +49,11 @@ export TEST_PREFIX="data_w_pos/plgems_full_casf2016.pt"
 export NUM_EPOCHS="${NUM_EPOCHS:-150}"
 export BATCH_SIZE="${BATCH_SIZE:-16}"
 export CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-10}"
-export LEARNING_RATE=${LEARNING_RATE:-0.0007}
-export HIDDEN_DIM="${HIDDEN_DIM:-128}"
-export NUM_ENCODER_LAYERS="${NUM_ENCODER_LAYERS:-5}"
-export NUM_DECODER_LAYERS="${NUM_DECODER_LAYERS:-5}"
-export MASKING_RATIO="${MASKING_RATIO:-0.4}"
-export POS_SCALE="${POS_SCALE:-0.85}"
+export LEARNING_RATE=${LEARNING_RATE:-0.0001}
+export HIDDEN_DIM="${HIDDEN_DIM:-256}"
+export NUM_ENCODER_LAYERS="${NUM_ENCODER_LAYERS:-4}"
+export NUM_DECODER_LAYERS="${NUM_DECODER_LAYERS:-4}"
+export MASKING_RATIO="${MASKING_RATIO:-0.3}"
 
 echo "=========================================="
 echo "Vertex AI Deployment"
@@ -151,7 +150,6 @@ try:
             "--num_encoder_layers", "${NUM_ENCODER_LAYERS}",
             "--num_decoder_layers", "${NUM_DECODER_LAYERS}",
             "--masking_ratio", "${MASKING_RATIO}",
-            "--pos_scale", "${POS_SCALE}",
             "--checkpoint_interval", "${CHECKPOINT_INTERVAL}",
             "--cache_dir", "/tmp/pyg_cache",
             "--model_save_path", "/tmp/model",
