@@ -210,15 +210,31 @@ class MaskedGeometricAutoencoder(nn.Module):
                 batch_indices: Tensor) -> Tuple[Tensor, Tensor]:
         """Forward pass with position normalization"""
     
-        if torch.isnan(x).any():
-            print("NaN in input x!")
-        if torch.isnan(pos).any():
-            print("NaN in input pos")
-            
-        pos_mean = pos.mean(dim=0, keepdim=True)
-        pos_std = pos.std(dim=0, keepdim=True).clamp(min=1e-6)
+        self._foraward_count += 1
+        num_graphs = batch_indices.max().item() + 1
+    
+        # Compute per-graph means (vectorized)
+        pos_sum = torch.zeros((num_graphs, 3), device=pos.device)
+        pos_sum.scatter_add_(0, batch_indices.unsqueeze(1).expand(-1, 3), pos)
+        
+        # Count atoms per graph
+        graph_sizes = torch.bincount(batch_indices, minlength=num_graphs).float().unsqueeze(1)
+        pos_mean_per_graph = pos_sum / graph_sizes.clamp(min=1)
+        
+        # Broadcast means back to atoms
+        pos_mean = pos_mean_per_graph[batch_indices]
+        
+        # Compute per-graph std (vectorized)
+        pos_centered = pos - pos_mean
+        pos_sq_sum = torch.zeros((num_graphs, 3), device=pos.device)
+        pos_sq_sum.scatter_add_(0, batch_indices.unsqueeze(1).expand(-1, 3), pos_centered ** 2)
+        
+        pos_std_per_graph = torch.sqrt(pos_sq_sum / graph_sizes.clamp(min=1)).clamp(min=1e-6)
+        pos_std = pos_std_per_graph[batch_indices]
+        
+        # Normalize
         pos_normalized = (pos - pos_mean) / pos_std
-
+       
         # Randomly mask nodes and their edges.
         num_nodes = x.size(0)
         num_masked = max(1, int(self.masking_ratio * num_nodes))
@@ -260,7 +276,7 @@ class MaskedGeometricAutoencoder(nn.Module):
 
         # Decode to reconstruct masked node positions
         pos_reconstructed_norm = self.decoder(z, pos_combined, edge_index, edge_attr)
-
+        
         pos_reconstructed = pos_reconstructed_norm * pos_std + pos_mean
 
         return pos_reconstructed[mask_indices,:], mask_indices
